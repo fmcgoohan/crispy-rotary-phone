@@ -12,6 +12,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 SCHEMA_VERSION = "1.0.0"
+# 1.1.0: additive — `error` on the manifest stems block (M2).
+MANIFEST_SCHEMA_VERSION = "1.1.0"
 
 Status = Literal["ok", "pending", "failed", "stale", "not_applicable"]
 
@@ -117,10 +119,11 @@ class StemsState(BaseModel):
     retained: bool
     config_hash: Optional[str] = None
     run: Optional[RunMetadata] = None
+    error: Optional[str] = None
 
 
 class Manifest(BaseModel):
-    schema_version: str = SCHEMA_VERSION
+    schema_version: str = MANIFEST_SCHEMA_VERSION
     track_id: str
     title: str
     artist: Optional[str] = None

@@ -76,6 +76,49 @@ def ingest(
 
 
 @app.command()
+def stems(
+    track: str = typer.Argument(
+        ..., help="Track id, or a media path (re-resolved through the library)."
+    ),
+    library: Path = _LIBRARY_OPT,
+    config_path: Optional[Path] = _CONFIG_OPT,
+) -> None:
+    """Separate the normalized audio into vocals/drums/bass/other stems."""
+    from .stems import PrerequisiteError, StemsError, run_stems
+
+    cfg = _load_config(config_path)
+    try:
+        result = run_stems(track, Library(library), cfg)
+    except PrerequisiteError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    except StemsError as e:
+        typer.echo(f"error: stems failed: {e}", err=True)
+        raise typer.Exit(1)
+
+    if result.already_done:
+        typer.echo(f"stems up to date: {result.track_id} — no-op")
+    else:
+        kept = "retained" if result.retained else "not retained (per config)"
+        typer.echo(f"stems {result.track_id} [device={result.device}] {kept}")
+
+
+models_app = typer.Typer(help="Manage model weights.", no_args_is_help=True)
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("fetch")
+def models_fetch(config_path: Optional[Path] = _CONFIG_OPT) -> None:
+    """Download model weights up front so batch runs never surprise-download."""
+    from .stems import fetch_model
+
+    cfg = _load_config(config_path)
+    typer.echo(f"fetching '{cfg.stems.model}' (first run downloads ~80-320 MB)...")
+    cache_dir = fetch_model(cfg.stems.model)
+    typer.echo(f"model '{cfg.stems.model}' ready; cache: {cache_dir}")
+
+
+@app.command()
 def status(library: Path = _LIBRARY_OPT) -> None:
     """List tracks and per-document statuses."""
     lib = Library(library)
