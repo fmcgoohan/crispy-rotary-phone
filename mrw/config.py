@@ -26,6 +26,10 @@ class StemsConfig(BaseModel, frozen=True):
     retain: bool = True  # OQ-3
     model: str = "htdemucs"
     device: str = "auto"  # auto | cpu | mps
+    # Stem-file byte identity (OQ-13) is guaranteed at cpu_threads = 1;
+    # raise for faster CPU separation when byte identity doesn't matter
+    # (review 005, field finding F-2).
+    cpu_threads: int = 1
 
 
 class Config(BaseModel, frozen=True):

@@ -80,7 +80,9 @@ def fetch_model(model_name: str) -> Path:
     return Path(torch.hub.get_dir()) / "checkpoints"
 
 
-def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> None:
+def _separate(
+    flac_path: Path, out_dir: Path, model_name: str, device: str, cpu_threads: int = 1
+) -> None:
     import soundfile as sf
     import torch
     from demucs.apply import apply_model
@@ -89,11 +91,13 @@ def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> N
     torch.manual_seed(0)
     if device == "cpu":
         # OQ-13: stem files carry no rounding layer, so cross-run byte
-        # identity on CPU requires eliminating thread-order float jitter.
-        # Process-global and deliberately not restored — fine for the
-        # one-shot CLI; a future combined-stage run sharing this process
-        # must set its own threading policy after separation (D5).
-        torch.set_num_threads(1)
+        # identity on CPU requires eliminating thread-order float jitter —
+        # the guarantee holds at cpu_threads = 1 (the default); higher
+        # values trade it for speed (review 005, F-2). Process-global and
+        # deliberately not restored — fine for the one-shot CLI; a future
+        # combined-stage run sharing this process must set its own
+        # threading policy after separation (D5).
+        torch.set_num_threads(max(1, cpu_threads))
 
     model = get_model(model_name)
     model.eval()
@@ -191,7 +195,18 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir()
-        _separate(flac_path, tmp_dir, cfg.stems.model, device)
+        try:
+            _separate(flac_path, tmp_dir, cfg.stems.model, device, cfg.stems.cpu_threads)
+        except Exception as exc:
+            if device != "mps":
+                raise
+            # Review 005, field finding F-1: htdemucs on MPS can fail at
+            # runtime on real tracks. Retry on CPU rather than failing the
+            # stage; the manifest records the device that actually ran.
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir()
+            device = "cpu"
+            _separate(flac_path, tmp_dir, cfg.stems.model, device, cfg.stems.cpu_threads)
 
         run = RunMetadata(
             started_at=started_at,
