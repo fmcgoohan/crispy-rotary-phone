@@ -99,6 +99,12 @@ def stems(
     if result.already_done:
         typer.echo(f"stems up to date: {result.track_id} — no-op")
     else:
+        if result.mps_fallback_error:
+            typer.echo(
+                "warning: mps separation failed, fell back to cpu: "
+                f"{result.mps_fallback_error}",
+                err=True,
+            )
         kept = "retained" if result.retained else "not retained (per config)"
         typer.echo(f"stems {result.track_id} [device={result.device}] {kept}")
 

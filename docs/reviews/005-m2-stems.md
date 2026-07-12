@@ -43,3 +43,17 @@ the milestone record of its findings and the process notes.
    the ~10-minute threshold, so the slow Demucs tests stay in the review
    workflow. The CPU double-run is the neural-path determinism evidence.
    Revisit when M3+ grows the suite.
+
+## Post-merge field findings (2026-07-12, real-library use)
+
+- **F-1 [major]** — `htdemucs` on MPS can fail at runtime on real tracks
+  (op-level errors surfacing mid-separation), failing the stage where CPU
+  would have succeeded. Fix (m2-field-fixes PR): on MPS failure the stage
+  retries once on CPU; the manifest `stems.run.device` records the device
+  that actually ran, keeping the OQ-13 audit trail truthful.
+- **F-2 [minor]** — the unconditional single-thread CPU pin makes long
+  real-world tracks needlessly slow when byte identity isn't required.
+  Fix: `stems.cpu_threads` config (default **1**, which is the setting the
+  OQ-13 byte-identity guarantee applies to); higher values trade the
+  guarantee for speed and, being part of the stems config subset, change
+  the stage `config_hash`.

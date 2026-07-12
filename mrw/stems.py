@@ -42,6 +42,9 @@ class StemsResult:
     device: str
     retained: bool
     already_done: bool
+    # Set when MPS failed and the stage fell back to CPU (review 005 F-1,
+    # H1: the fallback is surfaced, not swallowed).
+    mps_fallback_error: str | None = None
 
 
 def resolve_track_id(track: str, library: Library) -> str:
@@ -80,7 +83,9 @@ def fetch_model(model_name: str) -> Path:
     return Path(torch.hub.get_dir()) / "checkpoints"
 
 
-def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> None:
+def _separate(
+    flac_path: Path, out_dir: Path, model_name: str, device: str, cpu_threads: int = 1
+) -> None:
     import soundfile as sf
     import torch
     from demucs.apply import apply_model
@@ -89,11 +94,13 @@ def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> N
     torch.manual_seed(0)
     if device == "cpu":
         # OQ-13: stem files carry no rounding layer, so cross-run byte
-        # identity on CPU requires eliminating thread-order float jitter.
-        # Process-global and deliberately not restored — fine for the
-        # one-shot CLI; a future combined-stage run sharing this process
-        # must set its own threading policy after separation (D5).
-        torch.set_num_threads(1)
+        # identity on CPU requires eliminating thread-order float jitter —
+        # the guarantee holds at cpu_threads = 1 (the default); higher
+        # values trade it for speed (review 005, F-2). Process-global and
+        # deliberately not restored — fine for the one-shot CLI; a future
+        # combined-stage run sharing this process must set its own
+        # threading policy after separation (D5).
+        torch.set_num_threads(max(1, cpu_threads))
 
     model = get_model(model_name)
     model.eval()
@@ -177,6 +184,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
     tmp_dir = track_dir / ".stems.tmp"
+    mps_fallback_error: str | None = None
 
     def _record(state: StemsState) -> None:
         manifest.stems = state
@@ -191,7 +199,20 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir()
-        _separate(flac_path, tmp_dir, cfg.stems.model, device)
+        try:
+            _separate(flac_path, tmp_dir, cfg.stems.model, device, cfg.stems.cpu_threads)
+        except Exception as exc:
+            if device != "mps":
+                raise
+            # Review 005, field finding F-1: htdemucs on MPS can fail at
+            # runtime on real tracks. Retry on CPU rather than failing the
+            # stage; the manifest records the device that actually ran and
+            # the MPS error is surfaced to the caller (H1), not swallowed.
+            mps_fallback_error = str(exc)[:200]
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir()
+            device = "cpu"
+            _separate(flac_path, tmp_dir, cfg.stems.model, device, cfg.stems.cpu_threads)
 
         run = RunMetadata(
             started_at=started_at,
@@ -219,6 +240,11 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 retained=cfg.stems.retain,
                 config_hash=stems_hash,
                 run=run,
+                warning=(
+                    f"mps separation failed, fell back to cpu: {mps_fallback_error}"
+                    if mps_fallback_error
+                    else None
+                ),
             )
         )
         return StemsResult(
@@ -226,18 +252,30 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             device=device,
             retained=cfg.stems.retain,
             already_done=False,
+            mps_fallback_error=mps_fallback_error,
         )
     except PrerequisiteError:
         raise
     except Exception as exc:  # fail loudly, never leave partial stems/
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
+        if mps_fallback_error:
+            # Don't discard the original MPS failure when the CPU retry
+            # also fails (PR #5 review round 2) — and cap each part
+            # independently so the 500-char limit can never swallow the
+            # CPU-side detail (round 3): 200 + 250 + framing < 500.
+            message = (
+                f"cpu retry failed after mps failure ({mps_fallback_error}): "
+                f"{str(exc)[:250]}"
+            )
+        else:
+            message = str(exc)
         _record(
             StemsState(
                 status="failed",
                 retained=cfg.stems.retain,
                 config_hash=stems_hash,
-                error=str(exc)[:500],
+                error=message[:500],
             )
         )
-        raise StemsError(str(exc)[:500]) from exc
+        raise StemsError(message[:500]) from exc

@@ -38,9 +38,13 @@ Neural stages download model weights on first use (Demucs `htdemucs`,
 ~80 MB). Run `uv run mrw models fetch` once up front so batch runs never
 surprise-download. Weights are cached in torch's hub cache —
 `~/.cache/torch/hub/checkpoints/` by default (override with `TORCH_HOME`).
-Stem separation runs on Apple-Silicon GPU (`mps`) when available;
-stem-file byte determinism is guaranteed on `cpu` only (PLAN §7 / OQ-13) —
-set `[stems] device = "cpu"` in `mrw.toml` when you need it.
+Stem separation runs on Apple-Silicon GPU (`mps`) when available, with an
+automatic one-shot CPU retry if MPS fails mid-separation (the manifest
+records the device that actually ran). Stem-file byte determinism is
+guaranteed on `cpu` with `cpu_threads = 1` only (PLAN §7 / OQ-13) — set
+`[stems] device = "cpu"` in `mrw.toml` when you need it, and raise
+`cpu_threads` when you want faster CPU separation without the byte-identity
+guarantee.
 
 Tracks land in `./library/<track_id>/` (override with `--library` or
 `MRW_LIBRARY`). Configuration lives in `mrw.toml` (see `mrw/config.py` for
