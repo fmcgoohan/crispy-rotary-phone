@@ -42,7 +42,11 @@
           "description": "false = stems were generated for dependent stages but deleted per config; a re-run of a dependent stage must regenerate them."
         },
         "config_hash": { "$ref": "#/$defs/config_hash" },
-        "run": { "$ref": "#/$defs/run_metadata" }
+        "run": { "$ref": "#/$defs/run_metadata" },
+        "error": {
+          "type": "string",
+          "description": "Present when status is failed: one-line cause + truncated stderr. (Added in 1.1.0.)"
+        }
       }
     }
   },

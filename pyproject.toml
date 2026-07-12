@@ -6,6 +6,11 @@ requires-python = ">=3.11"
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.7",
+    "demucs==4.0.1",
+    "soundfile>=0.12",
+    # demucs 4.0.1 checkpoints fail torch>=2.6 (weights_only default flip)
+    "torch>=2.4,<2.6",
+    "torchaudio>=2.4,<2.6",
 ]
 
 [dependency-groups]
@@ -26,3 +31,16 @@ packages = ["mrw"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: invokes Demucs separation (minutes on CPU)",
+]
+
+# CPU-only torch wheels on Linux CI (default PyPI linux wheels bundle CUDA, ~2.5 GB)
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

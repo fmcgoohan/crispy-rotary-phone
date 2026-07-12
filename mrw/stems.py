@@ -1,0 +1,227 @@
+"""Stage 2 — stem separation (Demucs htdemucs) per PLAN §4 stage 2.
+
+Stems are files tracked by the manifest `stems` block, not documents.
+Determinism (OQ-13): stem-file byte identity is guaranteed on CPU only —
+torch threads are pinned to 1 there, because stem files have no rounding
+layer to absorb thread-order float jitter. The manifest records the device
+actually used so the guarantee is auditable. MPS is best-effort.
+
+Demucs note: pypi demucs 4.0.1 has no `demucs.api` module (that shipped only
+in unreleased 4.1 alphas); we use the stable lower-level surface
+(`demucs.pretrained.get_model` + `demucs.apply.apply_model`), replicating
+`demucs.separate`'s mean/std normalization around the model call.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from . import TOOL_VERSION, config, hashing
+from .library import Library
+from .models import RunMetadata, StemsState
+
+STEM_NAMES = ("vocals", "drums", "bass", "other")
+
+
+class StemsError(RuntimeError):
+    """Stage failure — recorded in the manifest as status=failed; exit 1."""
+
+
+class PrerequisiteError(RuntimeError):
+    """Bad invocation / missing prerequisites — nothing recorded; exit 2."""
+
+
+@dataclass
+class StemsResult:
+    track_id: str
+    device: str
+    retained: bool
+    already_done: bool
+
+
+def resolve_track_id(track: str, library: Library) -> str:
+    """Accept a track_id or a media path (re-resolved by content hash)."""
+    if re.fullmatch(r"[0-9a-f]{16}", track):
+        if library.manifest_path(track).is_file():
+            return track
+        raise PrerequisiteError(f"no such track in library: {track}")
+    path = Path(track)
+    if path.is_file():
+        track_id = hashing.track_id_from_sha(hashing.sha256_file(path))
+        if library.manifest_path(track_id).is_file():
+            return track_id
+        raise PrerequisiteError(
+            f"{path.name} (track {track_id}) is not ingested — run `mrw ingest` first"
+        )
+    raise PrerequisiteError(f"not a track_id or existing file: {track}")
+
+
+def _resolve_device(setting: str) -> str:
+    import torch
+
+    if setting == "auto":
+        return "mps" if torch.backends.mps.is_available() else "cpu"
+    if setting not in ("cpu", "mps"):
+        raise PrerequisiteError(f"stems.device must be auto|cpu|mps, got {setting!r}")
+    return setting
+
+
+def fetch_model(model_name: str) -> Path:
+    """Download the model weights if absent; returns the cache directory."""
+    import torch.hub
+    from demucs.pretrained import get_model
+
+    get_model(model_name)
+    return Path(torch.hub.get_dir()) / "checkpoints"
+
+
+def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> None:
+    import soundfile as sf
+    import torch
+    from demucs.apply import apply_model
+    from demucs.pretrained import get_model
+
+    torch.manual_seed(0)
+    if device == "cpu":
+        # OQ-13: stem files carry no rounding layer, so cross-run byte
+        # identity on CPU requires eliminating thread-order float jitter.
+        torch.set_num_threads(1)
+
+    model = get_model(model_name)
+    model.eval()
+
+    data, sample_rate = sf.read(flac_path, dtype="float32", always_2d=True)
+    if sample_rate != model.samplerate:
+        raise StemsError(
+            f"{flac_path.name} is {sample_rate} Hz; model expects {model.samplerate}"
+        )
+    wav = torch.from_numpy(data.T.copy())  # (channels, samples)
+    if wav.shape[0] != model.audio_channels:
+        raise StemsError(
+            f"{flac_path.name} has {wav.shape[0]} channels; "
+            f"model expects {model.audio_channels}"
+        )
+
+    # demucs.separate's normalization, replicated for parity with the CLI.
+    ref = wav.mean(0)
+    wav = (wav - ref.mean()) / ref.std()
+    with torch.no_grad():
+        sources = apply_model(
+            model,
+            wav[None],
+            device=device,
+            shifts=0,  # shift augmentation is randomized; keep it off
+            split=True,
+            overlap=0.25,
+            progress=False,
+            num_workers=0,
+        )[0]
+    sources = sources * ref.std() + ref.mean()
+
+    for name, tensor in zip(model.sources, sources):
+        pcm = (
+            tensor.clamp(-1.0, 1.0)
+            .mul(32767.0)
+            .round()
+            .to(torch.int16)
+            .cpu()
+            .numpy()
+        )
+        sf.write(out_dir / f"{name}.flac", pcm.T, sample_rate, subtype="PCM_16")
+
+
+def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
+    track_id = resolve_track_id(track, library)
+    manifest = library.read_manifest(track_id)
+    if manifest is None or manifest.documents.source.status != "ok":
+        raise PrerequisiteError(f"track {track_id} has no successful ingest")
+
+    stems_hash = config.stage_hash(cfg.stems)
+    track_dir = library.track_dir(track_id)
+    stems_dir = track_dir / "stems"
+
+    prior = manifest.stems
+    if (
+        prior is not None
+        and prior.status == "ok"
+        and prior.config_hash == stems_hash
+        and (
+            not prior.retained
+            or all((stems_dir / f"{n}.flac").is_file() for n in STEM_NAMES)
+        )
+    ):
+        return StemsResult(
+            track_id=track_id,
+            device=prior.run.device if prior.run and prior.run.device else "cpu",
+            retained=prior.retained,
+            already_done=True,
+        )
+
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    t0 = time.monotonic()
+    tmp_dir = track_dir / ".stems.tmp"
+
+    def _record(state: StemsState) -> None:
+        manifest.stems = state
+        library.write_manifest(track_id, manifest)
+
+    try:
+        device = _resolve_device(cfg.stems.device)
+        flac_path = track_dir / "source_audio.flac"
+        if not flac_path.is_file():
+            raise StemsError(f"missing {flac_path.name} — library is damaged?")
+
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        tmp_dir.mkdir()
+        _separate(flac_path, tmp_dir, cfg.stems.model, device)
+
+        run = RunMetadata(
+            started_at=started_at,
+            duration_seconds=round(time.monotonic() - t0, 2),
+            tool_version=TOOL_VERSION,
+            device=device,
+        )
+        if cfg.stems.retain:
+            if stems_dir.exists():
+                shutil.rmtree(stems_dir)
+            tmp_dir.rename(stems_dir)
+        else:
+            # Dependent stages consume the stems here in a combined run
+            # (none exist yet — M3+); then the files go away and the
+            # manifest tells any later re-run to regenerate.
+            shutil.rmtree(tmp_dir)
+
+        _record(
+            StemsState(
+                status="ok",
+                retained=cfg.stems.retain,
+                config_hash=stems_hash,
+                run=run,
+            )
+        )
+        return StemsResult(
+            track_id=track_id,
+            device=device,
+            retained=cfg.stems.retain,
+            already_done=False,
+        )
+    except PrerequisiteError:
+        raise
+    except Exception as exc:  # fail loudly, never leave partial stems/
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        _record(
+            StemsState(
+                status="failed",
+                retained=cfg.stems.retain,
+                config_hash=stems_hash,
+                error=str(exc)[:500],
+            )
+        )
+        raise StemsError(str(exc)[:500]) from exc
