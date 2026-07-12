@@ -137,9 +137,9 @@ costs 4–6× on the slowest stage and isn't worth it for a creative tool.
 **Resolution (review 005, F-2):** the stem-file guarantee is further scoped
 to `stems.cpu_threads = 1` (the default) — higher thread counts trade byte
 identity for CPU speed, and being part of the stems config subset they
-change the stage `config_hash`. MPS runs may silently fall back to CPU on
-runtime failure (F-1); `stems.run.device` in the manifest records what
-actually ran either way.
+change the stage `config_hash`. MPS runs fall back to CPU on runtime
+failure (F-1), surfaced via a CLI warning and the manifest's
+`stems.warning`; `stems.run.device` records what actually ran either way.
 
 **OQ-14 — Float precision contract.**
 Seconds 3 dp (1 ms), dB 2 dp, Hz 1 dp, ratios/confidences 3 dp — chosen as
