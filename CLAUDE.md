@@ -9,9 +9,13 @@ Architecture and milestones: `PLAN.md`. Document contracts: `schemas/`.
 
 - **Source-agnostic ingest.** Input is a local media file. No downloading,
   no network acquisition of media of any kind, ever.
-- **Offline by default.** The only permitted network call is the pluggable
-  vision-captioning backend (Anthropic API) behind the `CaptionBackend`
-  interface, defaulting to a no-op; API key from `ANTHROPIC_API_KEY`.
+- **Offline by default.** Two permitted network exceptions: (1) the
+  pluggable vision-captioning backend (Anthropic API) behind the
+  `CaptionBackend` interface, defaulting to a no-op, API key from
+  `ANTHROPIC_API_KEY`; (2) first-use model-weight downloads (Demucs, later
+  Whisper) from their official distribution — pre-fetch with
+  `mrw models fetch` so batch runs never surprise-download (PLAN §10).
+  Never any network acquisition of media or analysis content.
 - **Determinism.** Same input + same config ⇒ byte-identical analysis
   documents. `manifest.json` is the one file allowed to differ between runs
   — ALL volatile data (timestamps, durations, host, device, tool versions)

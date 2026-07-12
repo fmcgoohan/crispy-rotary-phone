@@ -107,9 +107,15 @@ def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> N
             f"model expects {model.audio_channels}"
         )
 
-    # demucs.separate's normalization, replicated for parity with the CLI.
+    # demucs.separate's normalization, replicated for parity with the CLI —
+    # except that a silent or DC-only input has ref.std() == 0 and would
+    # divide to NaN in every stem (M2 review, H2). Convention: (near-)silent
+    # input separates unnormalized to (near-)silent stems.
     ref = wav.mean(0)
-    wav = (wav - ref.mean()) / ref.std()
+    ref_mean, ref_std = ref.mean(), ref.std()
+    normalize = ref_std.item() > 0.0
+    if normalize:
+        wav = (wav - ref_mean) / ref_std
     with torch.no_grad():
         sources = apply_model(
             model,
@@ -121,7 +127,10 @@ def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> N
             progress=False,
             num_workers=0,
         )[0]
-    sources = sources * ref.std() + ref.mean()
+    if normalize:
+        sources = sources * ref_std + ref_mean
+    if not torch.isfinite(sources).all():
+        raise StemsError("separation produced non-finite samples (NaN/Inf)")
 
     for name, tensor in zip(model.sources, sources):
         pcm = (

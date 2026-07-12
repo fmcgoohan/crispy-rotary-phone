@@ -160,6 +160,29 @@ def test_retain_false_leaves_no_stems(tmp_path: Path) -> None:
     assert manifest["stems"]["retained"] is False
 
 
+@pytest.mark.slow
+def test_silent_input_produces_finite_near_silent_stems(tmp_path: Path) -> None:
+    # H2 (M2 review): silent input must not NaN — it separates unnormalized.
+    import numpy as np
+    import soundfile as sf
+
+    silent = tmp_path / "silence3.wav"
+    with wave.open(str(silent), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(b"\x00" * (SAMPLE_RATE * 3 * 4))
+
+    library = tmp_path / "lib"
+    track_id = _ingest(silent, library)
+    _run_stems(track_id, library, _cpu_config(tmp_path))
+
+    for name in STEM_NAMES:
+        data, _ = sf.read(library / track_id / "stems" / f"{name}.flac")
+        assert np.isfinite(data).all()
+        assert np.abs(data).max() < 0.1, f"stem {name} is not near-silent"
+
+
 def test_missing_source_audio_fails_cleanly(tmp_path: Path) -> None:
     mix = tmp_path / "mix2.wav"
     _write_mix(mix, seconds=2.0)
