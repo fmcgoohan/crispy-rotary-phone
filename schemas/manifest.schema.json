@@ -46,6 +46,10 @@
         "error": {
           "type": "string",
           "description": "Present when status is failed: one-line cause + truncated stderr. (Added in 1.1.0.)"
+        },
+        "warning": {
+          "type": "string",
+          "description": "Present when the stage succeeded with a caveat a batch operator should see — e.g. the MPS-failure reason behind an automatic CPU fallback. (Added in 1.2.0.)"
         }
       }
     }
@@ -72,7 +76,7 @@
         "device": {
           "type": "string",
           "enum": ["cpu", "mps"],
-          "description": "Present for neural stages (stems, lyrics). Documents are byte-identical across devices; stem FILES are guaranteed identical only on cpu (see PLAN §7)."
+          "description": "Present for neural stages (stems, lyrics). Documents are byte-identical across devices; stem FILES are guaranteed identical only on cpu with stems.cpu_threads = 1 (see PLAN §7 / OQ-13). cpu here may be the result of an automatic MPS-failure fallback — see the stems block warning field."
         }
       }
     },

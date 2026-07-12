@@ -83,10 +83,15 @@ def test_mps_failure_retries_on_cpu(tmp_path: Path, monkeypatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert calls == ["mps", "cpu"]
+    # H1 (PR #5 review): the fallback is surfaced to the user, not swallowed.
+    assert "fell back to cpu" in result.output
 
     manifest = json.loads((library / track_id / "manifest.json").read_text())
     assert manifest["stems"]["status"] == "ok"
     assert manifest["stems"]["run"]["device"] == "cpu"  # what actually ran
+    # Round 2: the fallback reason is persisted for batch runs, not just
+    # printed to a transient stderr.
+    assert "MPS op not supported" in manifest["stems"]["warning"]
     for name in STEM_NAMES:
         assert (library / track_id / "stems" / f"{name}.flac").is_file()
 
@@ -113,6 +118,28 @@ def test_cpu_failure_does_not_retry(tmp_path: Path, monkeypatch) -> None:
     assert calls == ["cpu"]  # exactly one attempt
     manifest = json.loads((library / track_id / "manifest.json").read_text())
     assert manifest["stems"]["status"] == "failed"
+
+
+def test_mps_then_cpu_failure_records_both(tmp_path: Path, monkeypatch) -> None:
+    wav = tmp_path / "t.wav"
+    _make_wav(wav)
+    library = tmp_path / "lib"
+    track_id = _ingest(wav, library)
+
+    def fake_separate(flac, out_dir, model, device, cpu_threads=1):
+        raise RuntimeError(f"{device} exploded")
+
+    monkeypatch.setattr(mrw.stems, "_separate", fake_separate)
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[stems]\ndevice = "mps"\n')
+    result = runner.invoke(
+        app, ["stems", track_id, "--library", str(library), "--config", str(cfg)]
+    )
+    assert result.exit_code == 1
+    error = json.loads((library / track_id / "manifest.json").read_text())["stems"][
+        "error"
+    ]
+    assert "mps exploded" in error and "cpu exploded" in error
 
 
 def test_cpu_threads_plumbed_and_hashes_config(tmp_path: Path, monkeypatch) -> None:

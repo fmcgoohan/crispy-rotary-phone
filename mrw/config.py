@@ -11,7 +11,7 @@ import hashlib
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import canonical
 
@@ -28,8 +28,9 @@ class StemsConfig(BaseModel, frozen=True):
     device: str = "auto"  # auto | cpu | mps
     # Stem-file byte identity (OQ-13) is guaranteed at cpu_threads = 1;
     # raise for faster CPU separation when byte identity doesn't matter
-    # (review 005, field finding F-2).
-    cpu_threads: int = 1
+    # (review 005, field finding F-2). Validated here, not clamped deep
+    # in the wrapper.
+    cpu_threads: int = Field(default=1, ge=1)
 
 
 class FeaturesConfig(BaseModel, frozen=True):
