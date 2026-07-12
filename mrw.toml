@@ -1,2 +1,5 @@
 [stems]
 device = "cpu"
+[features]
+vocal_min_gap_seconds = 1.0
+
