@@ -42,6 +42,9 @@ class StemsResult:
     device: str
     retained: bool
     already_done: bool
+    # Set when MPS failed and the stage fell back to CPU (review 005 F-1,
+    # H1: the fallback is surfaced, not swallowed).
+    mps_fallback_error: str | None = None
 
 
 def resolve_track_id(track: str, library: Library) -> str:
@@ -195,6 +198,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir()
+        mps_fallback_error: str | None = None
         try:
             _separate(flac_path, tmp_dir, cfg.stems.model, device, cfg.stems.cpu_threads)
         except Exception as exc:
@@ -202,7 +206,9 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 raise
             # Review 005, field finding F-1: htdemucs on MPS can fail at
             # runtime on real tracks. Retry on CPU rather than failing the
-            # stage; the manifest records the device that actually ran.
+            # stage; the manifest records the device that actually ran and
+            # the MPS error is surfaced to the caller (H1), not swallowed.
+            mps_fallback_error = str(exc)[:200]
             shutil.rmtree(tmp_dir, ignore_errors=True)
             tmp_dir.mkdir()
             device = "cpu"
@@ -241,6 +247,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             device=device,
             retained=cfg.stems.retain,
             already_done=False,
+            mps_fallback_error=mps_fallback_error,
         )
     except PrerequisiteError:
         raise

@@ -83,6 +83,8 @@ def test_mps_failure_retries_on_cpu(tmp_path: Path, monkeypatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert calls == ["mps", "cpu"]
+    # H1 (PR #5 review): the fallback is surfaced to the user, not swallowed.
+    assert "fell back to cpu" in result.output
 
     manifest = json.loads((library / track_id / "manifest.json").read_text())
     assert manifest["stems"]["status"] == "ok"
