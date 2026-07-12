@@ -222,6 +222,14 @@ def ingest(
 
     lyrics_input = _lyrics_input(lyrics_path, track_dir) if lyrics_path else None
 
+    # OQ-2 / review 001 R-7: opt-in self-contained library. The copy is an
+    # artifact (like stems), not a document — the video stage prefers
+    # source_video.* over file.original_path when present.
+    if has_video and cfg.ingest.copy_video:
+        shutil.copyfile(
+            media_path, track_dir / f"source_video{media_path.suffix.lower()}"
+        )
+
     source_doc = SourceDocument(
         track_id=track_id,
         file=SourceFile(
