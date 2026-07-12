@@ -1,0 +1,122 @@
+{
+  "_note": "Worked example. Section boundaries are snapped to downbeats of the grid in audio_features.json (beat i at 0.612 + 0.4992*i; downbeats at indices 2, 6, 10, ...). `editing.cuts` truncated: the real document lists all 77 cuts. Keys prefixed with _ are documentation-only.",
+  "schema_version": "1.0.0",
+  "track_id": "3f9a1c7e2b8d4056",
+  "sections": [
+    {
+      "label": "intro",
+      "start_seconds": 0.0,
+      "end_seconds": 15.588,
+      "start_beat_index": 0,
+      "start_bar_index": 0,
+      "confidence": 0.9,
+      "evidence": ["audio_novelty"]
+    },
+    {
+      "label": "verse",
+      "occurrence": 1,
+      "start_seconds": 15.588,
+      "end_seconds": 45.54,
+      "start_beat_index": 30,
+      "start_bar_index": 7,
+      "confidence": 0.84,
+      "evidence": ["audio_novelty", "lyric_repetition"]
+    },
+    {
+      "label": "chorus",
+      "occurrence": 1,
+      "start_seconds": 45.54,
+      "end_seconds": 75.492,
+      "start_beat_index": 90,
+      "start_bar_index": 22,
+      "confidence": 0.93,
+      "evidence": ["audio_novelty", "lyric_repetition"]
+    },
+    {
+      "label": "verse",
+      "occurrence": 2,
+      "start_seconds": 75.492,
+      "end_seconds": 105.444,
+      "start_beat_index": 150,
+      "start_bar_index": 37,
+      "confidence": 0.82,
+      "evidence": ["audio_novelty", "lyric_repetition"]
+    },
+    {
+      "label": "chorus",
+      "occurrence": 2,
+      "start_seconds": 105.444,
+      "end_seconds": 135.396,
+      "start_beat_index": 210,
+      "start_bar_index": 52,
+      "confidence": 0.94,
+      "evidence": ["audio_novelty", "lyric_repetition"]
+    },
+    {
+      "label": "bridge",
+      "start_seconds": 135.396,
+      "end_seconds": 165.348,
+      "start_beat_index": 270,
+      "start_bar_index": 67,
+      "confidence": 0.71,
+      "evidence": ["audio_novelty"]
+    },
+    {
+      "label": "chorus",
+      "occurrence": 3,
+      "start_seconds": 165.348,
+      "end_seconds": 211.274,
+      "start_beat_index": 330,
+      "start_bar_index": 82,
+      "confidence": 0.9,
+      "evidence": ["audio_novelty", "lyric_repetition"]
+    },
+    {
+      "label": "outro",
+      "start_seconds": 211.274,
+      "end_seconds": 242.5,
+      "start_beat_index": 422,
+      "start_bar_index": 105,
+      "confidence": 0.88,
+      "evidence": ["audio_novelty"]
+    }
+  ],
+  "editing": {
+    "on_beat_window_seconds": 0.07,
+    "cuts_per_bar_global": 0.635,
+    "on_beat_cut_ratio": 0.481,
+    "per_section": [
+      { "cuts_per_bar": 0.4, "on_beat_cut_ratio": 0.333 },
+      { "cuts_per_bar": 0.533, "on_beat_cut_ratio": 0.375 },
+      { "cuts_per_bar": 0.933, "on_beat_cut_ratio": 0.643 },
+      { "cuts_per_bar": 0.533, "on_beat_cut_ratio": 0.375 },
+      { "cuts_per_bar": 0.933, "on_beat_cut_ratio": 0.643 },
+      { "cuts_per_bar": 0.267, "on_beat_cut_ratio": 0.25 },
+      { "cuts_per_bar": 1.043, "on_beat_cut_ratio": 0.583 },
+      { "cuts_per_bar": 0.256, "on_beat_cut_ratio": 0.0 }
+    ],
+    "cuts": [
+      {
+        "time_seconds": 3.104,
+        "nearest_beat_index": 5,
+        "offset_seconds": -0.004
+      },
+      {
+        "time_seconds": 5.616,
+        "nearest_beat_index": 10,
+        "offset_seconds": 0.012
+      },
+      {
+        "time_seconds": 8.601,
+        "nearest_beat_index": 16,
+        "offset_seconds": 0.002
+      },
+      {
+        "_note": "74 further cuts truncated.",
+        "time_seconds": 14.09,
+        "nearest_beat_index": 27,
+        "offset_seconds": 0.0
+      }
+    ]
+  }
+}

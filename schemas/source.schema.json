@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source.schema.json",
+  "title": "source.json — ingest record for one track",
+  "description": "What was ingested and what it contained, per ffprobe. Pure function of the input file (no run metadata). The original file is referenced, not required after ingest: source_audio.flac in the track dir is the working copy.",
+  "type": "object",
+  "required": ["schema_version", "track_id", "file", "normalized_audio", "media"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
+    "file": {
+      "type": "object",
+      "required": ["original_path", "filename", "size_bytes", "sha256"],
+      "properties": {
+        "original_path": {
+          "type": "string",
+          "description": "Absolute path at ingest time. Informational; may go stale — nothing re-reads it."
+        },
+        "filename": { "type": "string" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": {
+          "$ref": "common.schema.json#/$defs/sha256",
+          "description": "Hash of the original file bytes; track_id is its first 16 hex chars."
+        }
+      }
+    },
+    "normalized_audio": {
+      "type": "object",
+      "description": "The working audio copy stored in the track directory; all analysis reads this, and t=0 of the unified timeline is its first sample.",
+      "required": ["path", "sample_rate", "channels", "duration_seconds", "audio_stream_sha256"],
+      "properties": {
+        "path": { "type": "string", "description": "Relative to the track directory, e.g. 'source_audio.flac'." },
+        "sample_rate": { "type": "integer", "const": 44100 },
+        "channels": { "type": "integer", "const": 2 },
+        "duration_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+        "audio_stream_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256",
+          "description": "Hash of the decoded PCM (s16le interleaved) — recognizes identical audio across remuxed containers for dedup hints."
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "description": "ffprobe summary of the original container.",
+      "required": ["container", "duration_seconds", "audio"],
+      "properties": {
+        "container": { "type": "string", "description": "e.g. 'mov,mp4,m4a,3gp,3g2,mj2' as reported by ffprobe format.format_name." },
+        "duration_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+        "tags": {
+          "type": "object",
+          "description": "Selected container tags, advisory only.",
+          "properties": {
+            "title": { "type": "string" },
+            "artist": { "type": "string" }
+          }
+        },
+        "audio": {
+          "type": "object",
+          "required": ["codec", "sample_rate", "channels"],
+          "properties": {
+            "codec": { "type": "string" },
+            "sample_rate": { "type": "integer" },
+            "channels": { "type": "integer" },
+            "bit_rate": { "type": "integer", "description": "bits/s if reported." }
+          }
+        },
+        "video": {
+          "type": "object",
+          "description": "Present only when the source has a video stream.",
+          "required": ["codec", "width", "height", "fps", "frame_count"],
+          "properties": {
+            "codec": { "type": "string" },
+            "width": { "type": "integer" },
+            "height": { "type": "integer" },
+            "fps": { "type": "number", "description": "Average frame rate. 3 decimal places (e.g. 23.976)." },
+            "frame_count": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "lyrics_input": {
+      "type": "object",
+      "description": "Present only when a lyrics file was supplied at ingest.",
+      "required": ["path", "format", "sha256"],
+      "properties": {
+        "path": { "type": "string", "description": "Copy in the track dir, e.g. 'lyrics_input.lrc'." },
+        "format": { "type": "string", "enum": ["lrc", "txt"] },
+        "sha256": { "$ref": "common.schema.json#/$defs/sha256" },
+        "line_count": { "type": "integer", "minimum": 0 },
+        "has_timestamps": { "type": "boolean", "description": "true for .lrc with time tags; those are used as alignment hints only." }
+      }
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common.schema.json",
+  "title": "Shared definitions for mrw analysis documents",
+  "$defs": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver of the document schema. Minor bump = additive, major bump = breaking."
+    },
+    "track_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "First 16 hex chars of the SHA-256 of the original source file bytes."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Seconds from t=0 = first sample of the normalized audio decode. 3 decimal places."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "0..1, 3 decimal places. Semantics defined where used; comparable within one field, not across documents."
+    },
+    "timeseries": {
+      "type": "object",
+      "description": "Uniform-hop dense series. values[i] is the measurement at start_seconds + i*hop_seconds. Sample at arbitrary t by linear interpolation of the two neighboring indices, clamped at the ends.",
+      "required": ["unit", "start_seconds", "hop_seconds", "values"],
+      "properties": {
+        "unit": {
+          "type": "string",
+          "description": "Unit of the values, lowercase (e.g. 'dbfs', 'hz', 'normalized')."
+        },
+        "start_seconds": { "$ref": "#/$defs/seconds" },
+        "hop_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Spacing between consecutive values. Pipeline default 0.01 (100 Hz)."
+        },
+        "values": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Plain numbers, rounded per the document precision contract. Swift: [Double]."
+        }
+      }
+    },
+    "interval": {
+      "type": "object",
+      "required": ["start_seconds", "end_seconds"],
+      "properties": {
+        "start_seconds": { "$ref": "#/$defs/seconds" },
+        "end_seconds": { "$ref": "#/$defs/seconds" }
+      },
+      "description": "Half-open [start, end). Interval lists are sorted by start_seconds and non-overlapping within a list."
+    },
+    "event_times": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/seconds" },
+      "description": "Sorted ascending list of event times in seconds. Query via binary search."
+    },
+    "hex_color": {
+      "type": "string",
+      "pattern": "^#[0-9a-f]{6}$",
+      "description": "sRGB, lowercase hex."
+    }
+  }
+}

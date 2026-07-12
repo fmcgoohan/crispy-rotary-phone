@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "audio_features.schema.json",
+  "title": "audio_features.json — tempo, beats, onsets, envelopes, loudness, vocal activity",
+  "description": "All dense series use the timeseries convention (common.schema.json) at a 10 ms hop and are sampled at arbitrary t via linear interpolation; beats/onsets are sorted event lists queried by binary search. This document owns the beat grid: every beat/bar index anywhere in the library refers to it.",
+  "type": "object",
+  "required": ["schema_version", "track_id", "duration_seconds", "tempo", "beats", "mix", "stems", "vocal_activity"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
+    "duration_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+    "tempo": {
+      "type": "object",
+      "required": ["bpm_global", "confidence"],
+      "properties": {
+        "bpm_global": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here."
+        },
+        "confidence": {
+          "$ref": "common.schema.json#/$defs/confidence",
+          "description": "Beat-tracker confidence; below ~0.5 treat the whole grid as advisory."
+        }
+      }
+    },
+    "beats": {
+      "type": "object",
+      "description": "The unified beat grid. Beat index i = times[i]. Bar index of beat i = floor((i - downbeat_offset) / beats_per_bar) once i >= downbeat_offset.",
+      "required": ["times", "beats_per_bar", "downbeat_offset", "downbeat_method"],
+      "properties": {
+        "times": { "$ref": "common.schema.json#/$defs/event_times" },
+        "beats_per_bar": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "v1 always 4 (assumed 4/4)."
+        },
+        "downbeat_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index into times of the first downbeat; downbeats are then every beats_per_bar-th beat."
+        },
+        "downbeat_method": {
+          "type": "string",
+          "enum": ["assumed_4_4_phase_fit", "model"],
+          "description": "assumed_4_4_phase_fit = estimated by choosing the beat phase maximizing onset strength under a 4/4 assumption; consumers should treat bar indices as approximate. 'model' reserved for a future real downbeat tracker."
+        }
+      }
+    },
+    "loudness": {
+      "type": "object",
+      "required": ["integrated_lufs"],
+      "properties": {
+        "integrated_lufs": {
+          "type": "number",
+          "description": "EBU R128 integrated loudness of the mix; use to normalize levels across tracks."
+        }
+      }
+    },
+    "mix": { "$ref": "#/$defs/channel_features" },
+    "stems": {
+      "type": "object",
+      "description": "Fixed four Demucs stems — fixed keys so Swift decodes a concrete struct.",
+      "required": ["vocals", "drums", "bass", "other"],
+      "properties": {
+        "vocals": { "$ref": "#/$defs/channel_features" },
+        "drums": { "$ref": "#/$defs/channel_features" },
+        "bass": { "$ref": "#/$defs/channel_features" },
+        "other": { "$ref": "#/$defs/channel_features" }
+      }
+    },
+    "vocal_activity": {
+      "type": "object",
+      "description": "Regions where the vocal stem is active, from hysteresis thresholding of its RMS envelope. lyrics.json measures its coverage against these.",
+      "required": ["regions"],
+      "properties": {
+        "regions": {
+          "type": "array",
+          "items": {
+            "allOf": [{ "$ref": "common.schema.json#/$defs/interval" }],
+            "type": "object",
+            "properties": {
+              "start_seconds": {},
+              "end_seconds": {},
+              "mean_rms_db": { "type": "number", "description": "Mean vocal-stem RMS within the region, dBFS." }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "channel_features": {
+      "type": "object",
+      "description": "Per-channel (mix or one stem) features.",
+      "required": ["rms_db", "spectral_centroid_hz", "onsets"],
+      "properties": {
+        "rms_db": {
+          "$ref": "common.schema.json#/$defs/timeseries",
+          "description": "unit 'dbfs'; silence floor clamped at -80.0."
+        },
+        "spectral_centroid_hz": {
+          "$ref": "common.schema.json#/$defs/timeseries",
+          "description": "unit 'hz'; 0.0 where the frame is below the silence floor (undefined centroid)."
+        },
+        "onsets": {
+          "type": "object",
+          "required": ["times", "strengths"],
+          "properties": {
+            "times": { "$ref": "common.schema.json#/$defs/event_times" },
+            "strengths": {
+              "type": "array",
+              "items": { "type": "number", "minimum": 0, "maximum": 1 },
+              "description": "Parallel to times; onset-envelope value normalized to this channel's max. Same length as times."
+            }
+          }
+        }
+      }
+    }
+  }
+}

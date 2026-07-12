@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "video.schema.json",
+  "title": "video.json — shots, representative frames, palettes, motion, captions",
+  "description": "Written only for video inputs (audio-only tracks: manifest marks the stage not_applicable and this file is absent). Shots are a sorted, non-overlapping, gap-free partition of the video span on the unified audio timeline. Captions come from a pluggable backend; backend 'null' means captioning was intentionally skipped (offline default), which consumers must distinguish from an empty-but-real caption.",
+  "type": "object",
+  "required": ["schema_version", "track_id", "video_span", "detector", "caption_backend", "shots"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
+    "video_span": {
+      "$ref": "common.schema.json#/$defs/interval",
+      "description": "Extent of the video stream on the unified timeline (normally 0 .. duration)."
+    },
+    "detector": {
+      "type": "object",
+      "description": "Shot-boundary detector identity — config-derived, deterministic.",
+      "required": ["name", "threshold", "min_shot_seconds"],
+      "properties": {
+        "name": { "type": "string", "description": "e.g. 'pyscenedetect_content'." },
+        "threshold": { "type": "number" },
+        "min_shot_seconds": { "type": "number" }
+      }
+    },
+    "caption_backend": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "'null' (offline no-op) or 'anthropic'. Others may appear later; consumers tolerate unknown names."
+        },
+        "model": { "type": "string", "description": "Present for API backends, e.g. a pinned Claude model id." },
+        "prompt_version": {
+          "type": "string",
+          "description": "Version tag of the captioning prompt; part of the caption cache key."
+        }
+      }
+    },
+    "shots": {
+      "type": "array",
+      "description": "Sorted by start_seconds; contiguous partition (shot[i].end_seconds == shot[i+1].start_seconds).",
+      "items": {
+        "type": "object",
+        "required": ["index", "start_seconds", "end_seconds", "start_frame", "end_frame", "representative_frames", "palette", "motion"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0, "description": "0-based shot number; frames/shot_%04d filenames use index+1." },
+          "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "start_frame": { "type": "integer", "minimum": 0, "description": "Source-video frame index, for reference back into the original file." },
+          "end_frame": { "type": "integer", "minimum": 0, "description": "Exclusive." },
+          "representative_frames": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "description": "1 frame (midpoint) for shots < 4 s, 2 frames (1/3, 2/3) otherwise.",
+            "items": {
+              "type": "object",
+              "required": ["time_seconds", "path", "sha256"],
+              "properties": {
+                "time_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+                "path": { "type": "string", "description": "Relative to track dir, e.g. 'frames/shot_0004_f1.jpg'. JPEG, max 1280 px wide." },
+                "sha256": {
+                  "$ref": "common.schema.json#/$defs/sha256",
+                  "description": "Hash of the JPEG bytes; keys the caption cache."
+                }
+              }
+            }
+          },
+          "palette": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "description": "Dominant colors, k-means (k=5) in CIELab over the representative frame(s), sorted by proportion descending. Fewer than 5 swatches only if the frame has fewer distinct clusters.",
+            "items": {
+              "type": "object",
+              "required": ["hex", "proportion"],
+              "properties": {
+                "hex": { "$ref": "common.schema.json#/$defs/hex_color" },
+                "proportion": {
+                  "type": "number", "minimum": 0, "maximum": 1,
+                  "description": "Fraction of sampled pixels in this cluster; proportions sum to ~1.0."
+                }
+              }
+            }
+          },
+          "motion": {
+            "type": "object",
+            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip.",
+            "required": ["mean", "p95"],
+            "properties": {
+              "mean": { "type": "number", "minimum": 0 },
+              "p95": { "type": "number", "minimum": 0 }
+            }
+          },
+          "caption": {
+            "type": "object",
+            "description": "Absent when caption_backend.name is 'null'. When present, one caption per shot (frames' captions merged by the backend).",
+            "required": ["text", "tags"],
+            "properties": {
+              "text": {
+                "type": "string",
+                "description": "One-sentence literal description of what is on screen."
+              },
+              "tags": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Lowercase snake_case tags: subjects, setting, lighting, mood, camera (e.g. 'close_up', 'neon_lighting', 'crowd'). Open vocabulary, prompt-steered."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

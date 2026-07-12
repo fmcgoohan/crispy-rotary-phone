@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lyrics.schema.json",
+  "title": "lyrics.json — timed lyrics with confidence and honesty flags",
+  "description": "Produced either by aligning a supplied lyrics file to the audio (mode 'aligned') or by transcribing the isolated vocal stem with Whisper (mode 'transcribed'). Uncertainty is explicit: per-word confidence, per-line flags, and untranscribed_regions listing sung passages the system could not read. Consumers must treat flagged content as suspect rather than assume completeness.",
+  "type": "object",
+  "required": ["schema_version", "track_id", "mode", "language", "lines", "untranscribed_regions", "coverage"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
+    "mode": {
+      "type": "string",
+      "enum": ["aligned", "transcribed"],
+      "description": "aligned: text is the supplied lyrics file (display truth), timing from Whisper anchoring. transcribed: text AND timing from Whisper on the vocal stem — expect errors on effects-heavy or non-lexical vocals."
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP-47-ish code as detected/pinned (e.g. 'en')."
+    },
+    "engine": {
+      "type": "object",
+      "description": "What produced the timing (and, in transcribed mode, the text). Config-derived, hence deterministic — not run metadata.",
+      "required": ["name", "model"],
+      "properties": {
+        "name": { "type": "string", "description": "e.g. 'faster-whisper'." },
+        "model": { "type": "string", "description": "e.g. 'small'." }
+      }
+    },
+    "lines": {
+      "type": "array",
+      "description": "Sorted by start_seconds. In aligned mode, lines mirror the supplied file's line breaks; in transcribed mode, lines are Whisper segments.",
+      "items": {
+        "type": "object",
+        "required": ["text", "start_seconds", "end_seconds", "words", "flags"],
+        "properties": {
+          "text": { "type": "string", "description": "Display text of the line." },
+          "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "confidence": {
+            "$ref": "common.schema.json#/$defs/confidence",
+            "description": "Mean word confidence."
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "low_confidence",
+                "possibly_non_lexical",
+                "overlapping_vocals",
+                "long_word_duration",
+                "unaligned",
+                "timing_interpolated"
+              ]
+            },
+            "description": "low_confidence: mean word confidence below threshold (config, default 0.5). possibly_non_lexical: hallucination heuristics fired (no_speech_prob / compression_ratio / dictionary hit rate) — text may be invented. overlapping_vocals: sustained dense vocal-stem energy suggests harmonies; words may be merged. long_word_duration: a word exceeds ~2.5 s (melisma); timings smeared. unaligned (aligned mode): line found no transcript anchor; timing absent-quality, taken from lrc hint or neighbor interpolation. timing_interpolated: word times inferred from neighbors rather than observed."
+          },
+          "words": {
+            "type": "array",
+            "description": "Sorted, monotone, within the line span. May be empty for an 'unaligned' line.",
+            "items": {
+              "type": "object",
+              "required": ["text", "start_seconds", "end_seconds", "confidence"],
+              "properties": {
+                "text": { "type": "string" },
+                "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+                "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+                "confidence": {
+                  "$ref": "common.schema.json#/$defs/confidence",
+                  "description": "transcribed mode: Whisper word probability. aligned mode: token match score between supplied word and transcript anchor."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "untranscribed_regions": {
+      "type": "array",
+      "description": "Vocal-activity regions (from audio_features.json) with no word overlap — singing the system could not read. The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
+      "items": { "$ref": "common.schema.json#/$defs/interval" }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["vocal_activity_covered_ratio", "lines_flagged_ratio"],
+      "properties": {
+        "vocal_activity_covered_ratio": {
+          "$ref": "common.schema.json#/$defs/confidence",
+          "description": "Fraction of total vocal-activity time overlapped by at least one word."
+        },
+        "lines_flagged_ratio": {
+          "$ref": "common.schema.json#/$defs/confidence",
+          "description": "Fraction of lines carrying any flag. A quick trust score for the whole document."
+        }
+      }
+    }
+  }
+}

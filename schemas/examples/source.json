@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0.0",
+  "track_id": "3f9a1c7e2b8d4056",
+  "file": {
+    "original_path": "/Users/operator/Music/incoming/neon_reverie_official_video.mp4",
+    "filename": "neon_reverie_official_video.mp4",
+    "size_bytes": 98234511,
+    "sha256": "3f9a1c7e2b8d4056aa10ce34f8d2b19c07e5a64d3f80b21c9e47d05a86f13b72"
+  },
+  "normalized_audio": {
+    "path": "source_audio.flac",
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 242.5,
+    "audio_stream_sha256": "b04e7d21f95a38c6d1e08f4a72c5b9301de6a8f24c07b53e9612d0af485c17e9"
+  },
+  "media": {
+    "container": "mov,mp4,m4a,3gp,3g2,mj2",
+    "duration_seconds": 242.541,
+    "tags": {
+      "title": "Neon Reverie",
+      "artist": "The Hypothetical"
+    },
+    "audio": {
+      "codec": "aac",
+      "sample_rate": 44100,
+      "channels": 2,
+      "bit_rate": 256000
+    },
+    "video": {
+      "codec": "h264",
+      "width": 1920,
+      "height": 1080,
+      "fps": 23.976,
+      "frame_count": 5815
+    }
+  },
+  "lyrics_input": {
+    "path": "lyrics_input.lrc",
+    "format": "lrc",
+    "sha256": "12c8f3a97b04d6e15f2a80c4d91e63b7205fa8d13c6e09b48d75f2e0a1936c54",
+    "line_count": 42,
+    "has_timestamps": true
+  }
+}

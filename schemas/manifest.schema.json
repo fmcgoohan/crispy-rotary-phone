@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "title": "manifest.json — mutable envelope for one track",
+  "description": "Index of analysis documents plus all run metadata. This is the ONLY file in a track directory permitted to differ between two runs on identical input+config; every volatile value (timestamps, durations, host, device, tool version) lives here and nowhere else.",
+  "type": "object",
+  "required": ["schema_version", "track_id", "title", "has_video", "documents"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
+    "title": {
+      "type": "string",
+      "description": "Display title. From --title at ingest, else container tags, else the source filename stem. Advisory, not identity."
+    },
+    "artist": { "type": "string", "description": "Optional, same provenance rules as title." },
+    "has_video": { "type": "boolean" },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO-8601 time of ingest. Run metadata — permitted here only."
+    },
+    "documents": {
+      "type": "object",
+      "description": "One fixed-name entry per pipeline document. Fixed keys (not a dynamic map) so Swift can decode a concrete struct.",
+      "required": ["source", "audio_features", "lyrics", "video", "structure"],
+      "properties": {
+        "source": { "$ref": "#/$defs/document_entry" },
+        "audio_features": { "$ref": "#/$defs/document_entry" },
+        "lyrics": { "$ref": "#/$defs/document_entry" },
+        "video": { "$ref": "#/$defs/document_entry" },
+        "structure": { "$ref": "#/$defs/document_entry" }
+      }
+    },
+    "stems": {
+      "type": "object",
+      "description": "Stem artifact status (stems are files, not a JSON document, so they are tracked here rather than in documents).",
+      "required": ["status", "retained"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "retained": {
+          "type": "boolean",
+          "description": "false = stems were generated for dependent stages but deleted per config; a re-run of a dependent stage must regenerate them."
+        },
+        "config_hash": { "$ref": "#/$defs/config_hash" },
+        "run": { "$ref": "#/$defs/run_metadata" }
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "pending", "failed", "stale", "not_applicable"],
+      "description": "pending = never run; stale = present but produced under a different config_hash than current config; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
+    },
+    "config_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "Hash of the canonical JSON of THIS STAGE's config subset, so unrelated config edits don't mark a document stale."
+    },
+    "run_metadata": {
+      "type": "object",
+      "description": "Volatile provenance for the most recent successful run of the stage.",
+      "required": ["started_at", "duration_seconds", "tool_version"],
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "tool_version": { "type": "string", "description": "mrw version string." },
+        "device": {
+          "type": "string",
+          "enum": ["cpu", "mps"],
+          "description": "Present for neural stages (stems, lyrics). Documents are byte-identical across devices; stem FILES are guaranteed identical only on cpu (see PLAN §7)."
+        }
+      }
+    },
+    "document_entry": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "path": {
+          "type": "string",
+          "description": "Path relative to the track directory. Present when status is ok or stale."
+        },
+        "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+        "content_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256",
+          "description": "Hash of the document file as written — the determinism-audit handle."
+        },
+        "config_hash": { "$ref": "#/$defs/config_hash" },
+        "run": { "$ref": "#/$defs/run_metadata" },
+        "error": {
+          "type": "string",
+          "description": "Present when status is failed: one-line cause + truncated stderr."
+        }
+      }
+    }
+  }
+}

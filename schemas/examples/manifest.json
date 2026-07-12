@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0.0",
+  "track_id": "3f9a1c7e2b8d4056",
+  "title": "Neon Reverie",
+  "artist": "The Hypothetical",
+  "has_video": true,
+  "created_at": "2026-07-11T17:42:03Z",
+  "documents": {
+    "source": {
+      "status": "ok",
+      "path": "source.json",
+      "schema_version": "1.0.0",
+      "content_sha256": "9c41d8a2e77f10b3554a6c09deed21c8830f47ab19e5d2c6704b8f3a1e09c5d2",
+      "config_hash": "a1b2c3d4e5f60718",
+      "run": {
+        "started_at": "2026-07-11T17:42:03Z",
+        "duration_seconds": 6.4,
+        "tool_version": "mrw 0.1.0"
+      }
+    },
+    "audio_features": {
+      "status": "ok",
+      "path": "audio_features.json",
+      "schema_version": "1.0.0",
+      "content_sha256": "5e0f2b7c81a4d6390c7e5512aa38f90d146bc2e7d80a35f194ce6b02d7a1843f",
+      "config_hash": "0f1e2d3c4b5a6978",
+      "run": {
+        "started_at": "2026-07-11T17:45:31Z",
+        "duration_seconds": 14.2,
+        "tool_version": "mrw 0.1.0"
+      }
+    },
+    "lyrics": {
+      "status": "ok",
+      "path": "lyrics.json",
+      "schema_version": "1.0.0",
+      "content_sha256": "77aa3d90c1e5f2b84660d3a8b91c04ef5d27a80613c9ef47b2058da164c3907b",
+      "config_hash": "9887766554433221",
+      "run": {
+        "started_at": "2026-07-11T17:45:46Z",
+        "duration_seconds": 38.9,
+        "tool_version": "mrw 0.1.0",
+        "device": "cpu"
+      }
+    },
+    "video": {
+      "status": "ok",
+      "path": "video.json",
+      "schema_version": "1.0.0",
+      "content_sha256": "c3d1a09e8b2f47651d30cc47a2e98105f7b6d4093ae8c12f60594b7d21e0af38",
+      "config_hash": "1122334455667788",
+      "run": {
+        "started_at": "2026-07-11T17:46:25Z",
+        "duration_seconds": 96.7,
+        "tool_version": "mrw 0.1.0"
+      }
+    },
+    "structure": {
+      "status": "ok",
+      "path": "structure.json",
+      "schema_version": "1.0.0",
+      "content_sha256": "e8b6f4d2c0a19735fd5b39c17e04a2861db0c5f3927e46a1805cd4b3f6291e07",
+      "config_hash": "8877665544332211",
+      "run": {
+        "started_at": "2026-07-11T17:48:02Z",
+        "duration_seconds": 7.8,
+        "tool_version": "mrw 0.1.0"
+      }
+    }
+  },
+  "stems": {
+    "status": "ok",
+    "retained": true,
+    "config_hash": "deadbeef01234567",
+    "run": {
+      "started_at": "2026-07-11T17:42:10Z",
+      "duration_seconds": 94.3,
+      "tool_version": "mrw 0.1.0",
+      "device": "mps"
+    }
+  }
+}

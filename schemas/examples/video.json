@@ -1,0 +1,114 @@
+{
+  "_note": "Worked example, truncated: the real document carries all 78 shots as a contiguous partition of 0..242.5. Keys prefixed with _ are documentation-only.",
+  "schema_version": "1.0.0",
+  "track_id": "3f9a1c7e2b8d4056",
+  "video_span": {
+    "start_seconds": 0.0,
+    "end_seconds": 242.5
+  },
+  "detector": {
+    "name": "pyscenedetect_content",
+    "threshold": 27.0,
+    "min_shot_seconds": 0.4
+  },
+  "caption_backend": {
+    "name": "anthropic",
+    "model": "claude-sonnet-5",
+    "prompt_version": "v1"
+  },
+  "shots": [
+    {
+      "index": 0,
+      "start_seconds": 0.0,
+      "end_seconds": 3.104,
+      "start_frame": 0,
+      "end_frame": 74,
+      "representative_frames": [
+        {
+          "time_seconds": 1.552,
+          "path": "frames/shot_0001_f1.jpg",
+          "sha256": "4a7c1e93d05b28f6a1c40e87b3d92f105ce6a94d27b08e35f1d60c4a982b7e51"
+        }
+      ],
+      "palette": [
+        { "hex": "#0d1b2e", "proportion": 0.442 },
+        { "hex": "#1f4e6b", "proportion": 0.271 },
+        { "hex": "#e8546a", "proportion": 0.128 },
+        { "hex": "#8fa8b8", "proportion": 0.094 },
+        { "hex": "#f2e9d8", "proportion": 0.065 }
+      ],
+      "motion": {
+        "mean": 0.0038,
+        "p95": 0.0091
+      },
+      "caption": {
+        "text": "A woman stands alone under a flickering pink neon sign on a rain-slicked street at night.",
+        "tags": ["night", "street", "rain", "neon_sign", "lone_figure", "wide_shot", "teal_and_pink_lighting"]
+      }
+    },
+    {
+      "index": 1,
+      "start_seconds": 3.104,
+      "end_seconds": 5.616,
+      "start_frame": 74,
+      "end_frame": 135,
+      "representative_frames": [
+        {
+          "time_seconds": 4.36,
+          "path": "frames/shot_0002_f1.jpg",
+          "sha256": "b19e4f70c2a6d8351e07f3b45a98c2d60f14e7ab93c05d28f6b1a04e75d3c982"
+        }
+      ],
+      "palette": [
+        { "hex": "#101418", "proportion": 0.503 },
+        { "hex": "#c93a55", "proportion": 0.198 },
+        { "hex": "#2b6478", "proportion": 0.154 },
+        { "hex": "#d9b48f", "proportion": 0.089 },
+        { "hex": "#5a5f66", "proportion": 0.056 }
+      ],
+      "motion": {
+        "mean": 0.0112,
+        "p95": 0.0247
+      },
+      "caption": {
+        "text": "Close-up of the woman's face lit by alternating red and blue light, eyes closed.",
+        "tags": ["close_up", "face", "eyes_closed", "red_and_blue_lighting", "shallow_focus"]
+      }
+    },
+    {
+      "_note": "A shot longer than 4 s gets two representative frames (1/3 and 2/3). 75 further shots truncated.",
+      "index": 3,
+      "start_seconds": 8.601,
+      "end_seconds": 14.09,
+      "start_frame": 206,
+      "end_frame": 338,
+      "representative_frames": [
+        {
+          "time_seconds": 10.431,
+          "path": "frames/shot_0004_f1.jpg",
+          "sha256": "0c5d2f81a94e37b60d1f48c2e75a90b3164dc8f5a20e97b34c6d015e8f2a7b49"
+        },
+        {
+          "time_seconds": 12.261,
+          "path": "frames/shot_0004_f2.jpg",
+          "sha256": "e72b09c4f6a1d8350b2c7e94d1f58a06c3e19b74d05a28f6c1b40d97e3a52f18"
+        }
+      ],
+      "palette": [
+        { "hex": "#1a2f4a", "proportion": 0.389 },
+        { "hex": "#79d4e8", "proportion": 0.226 },
+        { "hex": "#e8546a", "proportion": 0.171 },
+        { "hex": "#0b0e14", "proportion": 0.13 },
+        { "hex": "#c8d8e0", "proportion": 0.084 }
+      ],
+      "motion": {
+        "mean": 0.0284,
+        "p95": 0.0561
+      },
+      "caption": {
+        "text": "Tracking shot following the woman as she runs down a corridor of cyan light bars.",
+        "tags": ["tracking_shot", "running", "corridor", "cyan_lighting", "motion_blur", "high_energy"]
+      }
+    }
+  ]
+}

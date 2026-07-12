@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "structure.schema.json",
+  "title": "structure.json — song sections and cut/beat alignment",
+  "description": "Sections fuse audio-novelty segmentation with lyric-repetition clustering; each carries its evidence and confidence. Beat/bar indices refer to the beat grid in audio_features.json (this document owns no clock of its own). The editing block exists only for video inputs.",
+  "type": "object",
+  "required": ["schema_version", "track_id", "sections"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
+    "sections": {
+      "type": "array",
+      "description": "Sorted, non-overlapping, covering the full track duration. Boundaries snapped to the nearest downbeat.",
+      "items": {
+        "type": "object",
+        "required": ["label", "start_seconds", "end_seconds", "start_beat_index", "start_bar_index", "confidence", "evidence"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "enum": ["intro", "verse", "chorus", "bridge", "outro", "instrumental", "section_a", "section_b", "section_c", "section_d"],
+            "description": "Functional labels when lyric evidence supports them; generic section_a..d (by similarity cluster) when it does not (e.g. instrumental tracks)."
+          },
+          "occurrence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based count among sections sharing this label (chorus #2 => label 'chorus', occurrence 2). Present when a label repeats."
+          },
+          "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "start_beat_index": {
+            "type": "integer", "minimum": 0,
+            "description": "Index into audio_features.beats.times — convenience, derivable."
+          },
+          "start_bar_index": {
+            "type": "integer", "minimum": 0,
+            "description": "Derived bar number (see audio_features.beats). Approximate when downbeat_method is 'assumed_4_4_phase_fit'."
+          },
+          "confidence": { "$ref": "common.schema.json#/$defs/confidence" },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "enum": ["audio_novelty", "lyric_repetition"] },
+            "description": "Which detectors support this section. Both = strong; audio_novelty alone is common for instrumentals and intros."
+          }
+        }
+      }
+    },
+    "editing": {
+      "type": "object",
+      "description": "Cut/beat alignment metrics. Present only for video inputs.",
+      "required": ["on_beat_window_seconds", "cuts_per_bar_global", "on_beat_cut_ratio", "cuts"],
+      "properties": {
+        "on_beat_window_seconds": {
+          "type": "number",
+          "description": "Half-window used for the on-beat classification below (config, default 0.07). Consumers wanting a different definition should use the per-cut offsets instead."
+        },
+        "cuts_per_bar_global": { "type": "number", "minimum": 0 },
+        "on_beat_cut_ratio": {
+          "$ref": "common.schema.json#/$defs/confidence",
+          "description": "Fraction of cuts with |offset_seconds| <= on_beat_window_seconds."
+        },
+        "per_section": {
+          "type": "array",
+          "description": "Parallel to sections (same order, same length).",
+          "items": {
+            "type": "object",
+            "required": ["cuts_per_bar", "on_beat_cut_ratio"],
+            "properties": {
+              "cuts_per_bar": { "type": "number", "minimum": 0 },
+              "on_beat_cut_ratio": { "$ref": "common.schema.json#/$defs/confidence" }
+            }
+          }
+        },
+        "cuts": {
+          "type": "array",
+          "description": "Every shot boundary (excluding t=0), sorted, so the mapping engine can apply its own on-beat definition.",
+          "items": {
+            "type": "object",
+            "required": ["time_seconds", "nearest_beat_index", "offset_seconds"],
+            "properties": {
+              "time_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+              "nearest_beat_index": { "type": "integer", "minimum": 0 },
+              "offset_seconds": {
+                "type": "number",
+                "description": "cut time minus nearest beat time; negative = cut lands early."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "_note": "Worked example, truncated: the real document carries all 42 lines. Lyrics are invented for this hypothetical track. Keys prefixed with _ are documentation-only.",
+  "schema_version": "1.0.0",
+  "track_id": "3f9a1c7e2b8d4056",
+  "mode": "aligned",
+  "language": "en",
+  "engine": {
+    "name": "faster-whisper",
+    "model": "small"
+  },
+  "lines": [
+    {
+      "_note": "First verse line: clean lead vocal, high-confidence anchoring.",
+      "text": "City lights are bleeding through the window pane",
+      "start_seconds": 16.102,
+      "end_seconds": 19.87,
+      "confidence": 0.912,
+      "flags": [],
+      "words": [
+        { "text": "City", "start_seconds": 16.102, "end_seconds": 16.44, "confidence": 0.97 },
+        { "text": "lights", "start_seconds": 16.44, "end_seconds": 16.89, "confidence": 0.95 },
+        { "text": "are", "start_seconds": 16.89, "end_seconds": 17.06, "confidence": 0.88 },
+        { "text": "bleeding", "start_seconds": 17.06, "end_seconds": 17.71, "confidence": 0.93 },
+        { "text": "through", "start_seconds": 17.71, "end_seconds": 18.02, "confidence": 0.9 },
+        { "text": "the", "start_seconds": 18.02, "end_seconds": 18.15, "confidence": 0.85 },
+        { "text": "window", "start_seconds": 18.15, "end_seconds": 18.77, "confidence": 0.94 },
+        { "text": "pane", "start_seconds": 18.77, "end_seconds": 19.87, "confidence": 0.89 }
+      ]
+    },
+    {
+      "_note": "First chorus line: doubled vocals lower per-word anchor scores; melisma on the final word stretches it past 2.5 s.",
+      "text": "Neon reverie, don't wake me up",
+      "start_seconds": 46.02,
+      "end_seconds": 51.33,
+      "confidence": 0.641,
+      "flags": ["overlapping_vocals", "long_word_duration"],
+      "words": [
+        { "text": "Neon", "start_seconds": 46.02, "end_seconds": 46.61, "confidence": 0.81 },
+        { "text": "reverie,", "start_seconds": 46.61, "end_seconds": 47.66, "confidence": 0.72 },
+        { "text": "don't", "start_seconds": 47.66, "end_seconds": 48.09, "confidence": 0.66 },
+        { "text": "wake", "start_seconds": 48.09, "end_seconds": 48.52, "confidence": 0.58 },
+        { "text": "me", "start_seconds": 48.52, "end_seconds": 48.71, "confidence": 0.55 },
+        { "text": "up", "start_seconds": 48.71, "end_seconds": 51.33, "confidence": 0.52 }
+      ]
+    },
+    {
+      "_note": "Bridge line under heavy vocoder: no usable transcript anchor; timing interpolated from the .lrc hint. Words empty — consumers must not invent timing below line level here.",
+      "text": "Static in the signal, ghosts inside the wire",
+      "start_seconds": 136.44,
+      "end_seconds": 140.9,
+      "confidence": 0.18,
+      "flags": ["low_confidence", "unaligned", "timing_interpolated"],
+      "words": []
+    }
+  ],
+  "untranscribed_regions": [
+    {
+      "_note": "Final-chorus ad-libs ('oh-oh-oh' vocal runs): vocal activity present, no reliable words. 39 more lines truncated from `lines` above.",
+      "start_seconds": 200.48,
+      "end_seconds": 208.91
+    }
+  ],
+  "coverage": {
+    "vocal_activity_covered_ratio": 0.943,
+    "lines_flagged_ratio": 0.071
+  }
+}

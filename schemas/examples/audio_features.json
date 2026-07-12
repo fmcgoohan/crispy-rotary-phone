@@ -1,0 +1,126 @@
+{
+  "_note": "Worked example, heavily truncated. Real dense series carry ~24,250 values each (242.5 s at 10 ms hop); real event lists carry hundreds of entries. Keys prefixed with _ are documentation-only and never produced by the tool.",
+  "schema_version": "1.0.0",
+  "track_id": "3f9a1c7e2b8d4056",
+  "duration_seconds": 242.5,
+  "tempo": {
+    "bpm_global": 120.2,
+    "confidence": 0.871
+  },
+  "beats": {
+    "_note": "485 beats total (indices 0..484), interval ~0.499 s. Downbeats at indices 2, 6, 10, ... Bar index of beat i = floor((i - 2) / 4) for i >= 2.",
+    "times": [0.612, 1.111, 1.61, 2.11, 2.609, 3.108, 3.608, 4.107],
+    "beats_per_bar": 4,
+    "downbeat_offset": 2,
+    "downbeat_method": "assumed_4_4_phase_fit"
+  },
+  "loudness": {
+    "integrated_lufs": -9.8
+  },
+  "mix": {
+    "rms_db": {
+      "_note": "24,250 values in the real document.",
+      "unit": "dbfs",
+      "start_seconds": 0.0,
+      "hop_seconds": 0.01,
+      "values": [-80.0, -71.24, -52.18, -38.9, -31.42, -28.07, -26.55, -25.91]
+    },
+    "spectral_centroid_hz": {
+      "unit": "hz",
+      "start_seconds": 0.0,
+      "hop_seconds": 0.01,
+      "values": [0.0, 812.4, 1450.7, 2103.2, 2377.9, 2412.5, 2390.1, 2405.8]
+    },
+    "onsets": {
+      "_note": "~950 onsets in the real document; strengths normalized to this channel's max.",
+      "times": [0.614, 1.109, 1.612, 2.108, 2.611, 3.11],
+      "strengths": [0.82, 0.44, 0.91, 0.47, 0.88, 0.95]
+    }
+  },
+  "stems": {
+    "vocals": {
+      "rms_db": {
+        "unit": "dbfs",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [-80.0, -80.0, -80.0, -80.0, -78.31, -74.02, -69.88, -66.4]
+      },
+      "spectral_centroid_hz": {
+        "unit": "hz",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [0.0, 0.0, 0.0, 0.0, 1104.6, 1310.2, 1287.5, 1295.0]
+      },
+      "onsets": {
+        "times": [16.102, 16.598, 17.341],
+        "strengths": [0.71, 0.38, 0.64]
+      }
+    },
+    "drums": {
+      "rms_db": {
+        "unit": "dbfs",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [-80.0, -62.11, -41.03, -33.5, -30.18, -29.92, -30.4, -31.07]
+      },
+      "spectral_centroid_hz": {
+        "unit": "hz",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [0.0, 3210.5, 4870.2, 5102.8, 4995.1, 5010.7, 4988.3, 5001.9]
+      },
+      "onsets": {
+        "_note": "Drum onsets are the primary rhythmic event stream for visual mapping.",
+        "times": [0.613, 1.11, 1.611, 2.109, 2.61, 3.109],
+        "strengths": [1.0, 0.52, 0.97, 0.55, 0.94, 0.98]
+      }
+    },
+    "bass": {
+      "rms_db": {
+        "unit": "dbfs",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [-80.0, -74.6, -58.22, -44.1, -37.85, -35.6, -34.92, -34.7]
+      },
+      "spectral_centroid_hz": {
+        "unit": "hz",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [0.0, 210.4, 180.7, 155.2, 148.9, 150.3, 149.6, 151.1]
+      },
+      "onsets": {
+        "times": [0.615, 2.612, 4.61],
+        "strengths": [0.88, 0.79, 0.83]
+      }
+    },
+    "other": {
+      "rms_db": {
+        "unit": "dbfs",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [-80.0, -69.8, -50.44, -39.72, -34.15, -32.9, -32.51, -32.63]
+      },
+      "spectral_centroid_hz": {
+        "unit": "hz",
+        "start_seconds": 0.0,
+        "hop_seconds": 0.01,
+        "values": [0.0, 950.2, 1620.8, 1988.4, 2044.0, 2071.3, 2059.6, 2063.2]
+      },
+      "onsets": {
+        "times": [0.62, 4.612, 8.605],
+        "strengths": [0.66, 0.71, 0.69]
+      }
+    }
+  },
+  "vocal_activity": {
+    "_note": "No vocals during the intro (0-15.6) or outro (211.3-242.5); the bridge is only partly sung.",
+    "regions": [
+      { "start_seconds": 16.09, "end_seconds": 44.83, "mean_rms_db": -24.31 },
+      { "start_seconds": 46.02, "end_seconds": 74.9, "mean_rms_db": -21.05 },
+      { "start_seconds": 76.21, "end_seconds": 104.62, "mean_rms_db": -23.87 },
+      { "start_seconds": 106.01, "end_seconds": 134.79, "mean_rms_db": -20.92 },
+      { "start_seconds": 136.44, "end_seconds": 158.2, "mean_rms_db": -26.5 },
+      { "start_seconds": 166.03, "end_seconds": 208.91, "mean_rms_db": -20.44 }
+    ]
+  }
+}
