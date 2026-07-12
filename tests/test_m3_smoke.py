@@ -250,11 +250,6 @@ def test_features_on_real_separation(tmp_path: Path) -> None:
     cfg = tmp_path / "mrw.toml"
     cfg.write_text('[stems]\ndevice = "cpu"\n')
 
-    for cmd in (
-        ["ingest", str(wav), "--library", str(library)],
-        None,  # placeholder replaced below with the track id
-    ):
-        pass
     result = runner.invoke(app, ["ingest", str(wav), "--library", str(library)])
     assert result.exit_code == 0, result.output
     track_id = next(p.name for p in library.iterdir() if p.is_dir())

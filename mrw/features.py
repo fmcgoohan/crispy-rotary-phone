@@ -217,35 +217,40 @@ def _vocal_activity(vocal_rms_db, fcfg: config.FeaturesConfig) -> VocalActivity:
     import numpy as np
 
     # D3 (PR #6 review): config values pass through the precision contract
-    # like every other document field — a non-default mrw.toml must not be
-    # able to produce out-of-contract precision.
+    # like every other document field, and the ROUNDED values drive the
+    # computation below (round 3) — the recorded params are the exact
+    # provenance of the regions, not an approximation of it.
+    enter_db = canonical.round_db(fcfg.vocal_enter_db)
+    exit_db = canonical.round_db(fcfg.vocal_exit_db)
+    min_region_seconds = canonical.round_seconds(fcfg.vocal_min_region_seconds)
+    min_gap_seconds = canonical.round_seconds(fcfg.vocal_min_gap_seconds)
     params = VocalActivityParams(
-        enter_db=canonical.round_db(fcfg.vocal_enter_db),
-        exit_db=canonical.round_db(fcfg.vocal_exit_db),
-        min_region_seconds=canonical.round_seconds(fcfg.vocal_min_region_seconds),
-        min_gap_seconds=canonical.round_seconds(fcfg.vocal_min_gap_seconds),
+        enter_db=enter_db,
+        exit_db=exit_db,
+        min_region_seconds=min_region_seconds,
+        min_gap_seconds=min_gap_seconds,
     )
     spans: list[list[int]] = []
     active = False
     start = 0
     for i, v in enumerate(vocal_rms_db):
-        if not active and v >= fcfg.vocal_enter_db:
+        if not active and v >= enter_db:
             active, start = True, i
-        elif active and v < fcfg.vocal_exit_db:
+        elif active and v < exit_db:
             active = False
             spans.append([start, i])
     if active:
         spans.append([start, len(vocal_rms_db)])
 
     merged: list[list[int]] = []
-    max_gap = int(round(fcfg.vocal_min_gap_seconds / HOP_SECONDS))
+    max_gap = int(round(min_gap_seconds / HOP_SECONDS))
     for span in spans:
         if merged and span[0] - merged[-1][1] < max_gap:
             merged[-1][1] = span[1]
         else:
             merged.append(span)
 
-    min_len = int(round(fcfg.vocal_min_region_seconds / HOP_SECONDS))
+    min_len = int(round(min_region_seconds / HOP_SECONDS))
     regions = [
         VocalRegion(
             start_seconds=canonical.round_seconds(s * HOP_SECONDS),
@@ -298,6 +303,9 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
 
     try:
         mix_mono, mix_stereo = _load(track_dir / "source_audio.flac")
+        # The mix onset envelope is computed here (beat grid) and again in
+        # _channel_features (mix onsets) — deliberate: sharing it would
+        # couple the two code paths for a sub-second saving per track.
         tempo, beats = _beats_and_tempo(mix_mono)
         stem_channels: dict[str, ChannelFeatures] = {}
         vocal_rms = None
@@ -306,7 +314,13 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
             channel = _channel_features(y)
             stem_channels[name] = channel
             if name == "vocals":
-                vocal_rms = _rms_db(y)
+                # Hysteresis runs over the ROUNDED series — the exact values
+                # published in the document — so regions are derivable from
+                # the document's own envelope + params (PR #6 round 3), and
+                # the RMS isn't computed twice.
+                import numpy as np
+
+                vocal_rms = np.array(channel.rms_db.values)
 
         document = AudioFeaturesDocument(
             track_id=track_id,

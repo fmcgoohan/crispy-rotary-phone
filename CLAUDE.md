@@ -23,7 +23,7 @@ Architecture and milestones: `PLAN.md`. Document contracts: `schemas/`.
   re-runs at the same path (PLAN §7); `track_id` is over file bytes alone.
 - **Canonical serializer only.** Every document write goes through
   `mrw/canonical.py` — never `json.dump` directly. Precision contract:
-  seconds 3 dp, dB 2 dp, Hz 1 dp, ratios/confidences 3 dp.
+  seconds 3 dp, dB 2 dp, Hz 1 dp, BPM 1 dp, ratios/confidences 3 dp.
 - **Platform.** macOS on Apple Silicon, Python 3.11+, environment managed
   with `uv`. Prefer mature, well-maintained libraries.
 - **No copyrighted media** in the repo or tests — fixtures are generated
