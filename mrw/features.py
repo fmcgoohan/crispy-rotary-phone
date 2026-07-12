@@ -20,6 +20,13 @@ Reviewed conventions implemented here:
   embedded in the document (R-5 / OQ-5).
 
 All values rounded per the precision contract before serialization.
+
+Determinism policy (D5): unlike stems (raw float artifacts, thread-pinned on
+CPU), this stage emits documents only — the precision-contract rounding IS
+the jitter policy (PLAN §7 layer 1). Last-ulp float differences from BLAS
+thread ordering in librosa/numpy/pyloudnorm sit far below the coarsest
+rounding step (0.001 s / 0.01 dB / 0.1 Hz), so no thread pinning is needed;
+the double-run byte-identity smoke test is the standing evidence.
 """
 
 from __future__ import annotations
@@ -118,7 +125,7 @@ def _onsets(y) -> Onsets:
     reference = float(np.percentile(env, 98))
     # Keep the schema's exclusiveMinimum satisfied even for whisper-quiet
     # channels whose p98 would round to 0.000.
-    reference = max(round(reference, 3), 0.001)
+    reference = max(canonical.round_ratio(reference), 0.001)
     times = librosa.frames_to_time(frames, sr=SAMPLE_RATE, hop_length=HOP)
     strengths = np.clip(env[frames] / reference, 0.0, 1.0)
     return Onsets(
@@ -183,7 +190,10 @@ def _beats_and_tempo(y_mix) -> tuple[Tempo, Beats]:
         downbeat_offset = 0
 
     return (
-        Tempo(bpm_global=round(bpm, 1), confidence=canonical.round_ratio(confidence)),
+        Tempo(
+            bpm_global=canonical.round_bpm(bpm),
+            confidence=canonical.round_ratio(confidence),
+        ),
         Beats(
             times=[canonical.round_seconds(t) for t in beat_times],
             beats_per_bar=4,
