@@ -259,11 +259,17 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     except Exception as exc:  # fail loudly, never leave partial stems/
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
-        message = str(exc)
         if mps_fallback_error:
             # Don't discard the original MPS failure when the CPU retry
-            # also fails (PR #5 review round 2).
-            message = f"cpu retry failed after mps failure ({mps_fallback_error}): {message}"
+            # also fails (PR #5 review round 2) — and cap each part
+            # independently so the 500-char limit can never swallow the
+            # CPU-side detail (round 3): 200 + 250 + framing < 500.
+            message = (
+                f"cpu retry failed after mps failure ({mps_fallback_error}): "
+                f"{str(exc)[:250]}"
+            )
+        else:
+            message = str(exc)
         _record(
             StemsState(
                 status="failed",

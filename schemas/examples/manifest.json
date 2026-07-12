@@ -76,7 +76,8 @@
       "started_at": "2026-07-11T17:42:10Z",
       "duration_seconds": 94.3,
       "tool_version": "mrw 0.1.0",
-      "device": "mps"
-    }
+      "device": "cpu"
+    },
+    "warning": "mps separation failed, fell back to cpu: MPS backend out of memory (simulated example)"
   }
 }
