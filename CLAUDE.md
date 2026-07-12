@@ -50,4 +50,8 @@ Architecture and milestones: `PLAN.md`. Document contracts: `schemas/`.
   `OPEN_QUESTIONS.md`. PR-level standards: `docs/reviews/CHECKLIST.md`.
 - Milestones follow PLAN §11; each milestone PR includes its smoke test,
   and determinism claims are tested by double-run byte comparison.
+- Config-evolution policy: stage config_hashes cover the full canonical
+  config subset including defaults, so adding a field to a stage's config
+  invalidates (mass-stales) that stage for every existing track even when
+  outputs are identical at the default — deliberate, not a bug (review 006).
 - Exit codes: 0 success, 1 stage failure, 2 bad invocation.
