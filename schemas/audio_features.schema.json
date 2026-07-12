@@ -26,7 +26,7 @@
     },
     "beats": {
       "type": "object",
-      "description": "The unified beat grid. Beat index i = times[i]. Bar index of beat i = floor((i - downbeat_offset) / beats_per_bar) once i >= downbeat_offset.",
+      "description": "The unified beat grid. Beat index i = times[i]. Bar index of beat i = floor((i - downbeat_offset) / beats_per_bar) for i >= downbeat_offset; bar index clamps to 0 for beats before the first downbeat.",
       "required": ["times", "beats_per_bar", "downbeat_offset", "downbeat_method"],
       "properties": {
         "times": { "$ref": "common.schema.json#/$defs/event_times" },
@@ -112,7 +112,7 @@
         },
         "spectral_centroid_hz": {
           "$ref": "common.schema.json#/$defs/timeseries",
-          "description": "unit 'hz'. Frames below the silence floor hold the last valid centroid (frames before the first valid one are backfilled from it), so the series is everywhere-interpolable with no sentinel values. Whether anything is playing is rms_db's job, not this field's."
+          "description": "unit 'hz'. Frames below the silence floor hold the last valid centroid (frames before the first valid one are backfilled from it), so the series is everywhere-interpolable with no sentinel values. A channel that is silent throughout (e.g. the vocals stem of an instrumental) writes 0.0 for the entire series — check rms_db before using centroid. Whether anything is playing is rms_db's job, not this field's."
         },
         "onsets": {
           "type": "object",
@@ -127,7 +127,7 @@
             "strength_reference": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "98th percentile of this channel's raw onset-strength envelope — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference."
+              "description": "98th percentile of this channel's raw onset-strength envelope — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference. When times is empty (a channel with no detected onsets, e.g. a silent stem), the documented sentinel 1.0 is written so the field stays present and positive."
             }
           }
         }
