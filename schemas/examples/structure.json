@@ -20,7 +20,7 @@
       "start_beat_index": 30,
       "start_bar_index": 7,
       "confidence": 0.84,
-      "evidence": ["audio_novelty", "lyric_repetition"]
+      "evidence": ["audio_novelty", "lyric_repetition", "supplied_markup"]
     },
     {
       "label": "chorus",
@@ -29,8 +29,8 @@
       "end_seconds": 75.492,
       "start_beat_index": 90,
       "start_bar_index": 22,
-      "confidence": 0.93,
-      "evidence": ["audio_novelty", "lyric_repetition"]
+      "confidence": 0.95,
+      "evidence": ["audio_novelty", "lyric_repetition", "supplied_markup"]
     },
     {
       "label": "verse",
@@ -39,8 +39,8 @@
       "end_seconds": 105.444,
       "start_beat_index": 150,
       "start_bar_index": 37,
-      "confidence": 0.82,
-      "evidence": ["audio_novelty", "lyric_repetition"]
+      "confidence": 0.84,
+      "evidence": ["audio_novelty", "lyric_repetition", "supplied_markup"]
     },
     {
       "label": "chorus",
@@ -49,8 +49,8 @@
       "end_seconds": 135.396,
       "start_beat_index": 210,
       "start_bar_index": 52,
-      "confidence": 0.94,
-      "evidence": ["audio_novelty", "lyric_repetition"]
+      "confidence": 0.95,
+      "evidence": ["audio_novelty", "lyric_repetition", "supplied_markup"]
     },
     {
       "label": "bridge",
@@ -58,8 +58,8 @@
       "end_seconds": 165.348,
       "start_beat_index": 270,
       "start_bar_index": 67,
-      "confidence": 0.71,
-      "evidence": ["audio_novelty"]
+      "confidence": 0.9,
+      "evidence": ["audio_novelty", "supplied_markup"]
     },
     {
       "label": "chorus",
@@ -68,8 +68,8 @@
       "end_seconds": 211.274,
       "start_beat_index": 330,
       "start_bar_index": 82,
-      "confidence": 0.9,
-      "evidence": ["audio_novelty", "lyric_repetition"]
+      "confidence": 0.93,
+      "evidence": ["audio_novelty", "lyric_repetition", "supplied_markup"]
     },
     {
       "label": "outro",
@@ -86,14 +86,14 @@
     "cuts_per_bar_global": 0.635,
     "on_beat_cut_ratio": 0.481,
     "per_section": [
-      { "cuts_per_bar": 0.4, "on_beat_cut_ratio": 0.333 },
-      { "cuts_per_bar": 0.533, "on_beat_cut_ratio": 0.375 },
-      { "cuts_per_bar": 0.933, "on_beat_cut_ratio": 0.643 },
-      { "cuts_per_bar": 0.533, "on_beat_cut_ratio": 0.375 },
-      { "cuts_per_bar": 0.933, "on_beat_cut_ratio": 0.643 },
-      { "cuts_per_bar": 0.267, "on_beat_cut_ratio": 0.25 },
-      { "cuts_per_bar": 1.043, "on_beat_cut_ratio": 0.583 },
-      { "cuts_per_bar": 0.256, "on_beat_cut_ratio": 0.0 }
+      { "section_index": 0, "cuts_per_bar": 0.4, "on_beat_cut_ratio": 0.333 },
+      { "section_index": 1, "cuts_per_bar": 0.533, "on_beat_cut_ratio": 0.375 },
+      { "section_index": 2, "cuts_per_bar": 0.933, "on_beat_cut_ratio": 0.643 },
+      { "section_index": 3, "cuts_per_bar": 0.533, "on_beat_cut_ratio": 0.375 },
+      { "section_index": 4, "cuts_per_bar": 0.933, "on_beat_cut_ratio": 0.643 },
+      { "section_index": 5, "cuts_per_bar": 0.267, "on_beat_cut_ratio": 0.25 },
+      { "section_index": 6, "cuts_per_bar": 1.043, "on_beat_cut_ratio": 0.583 },
+      { "section_index": 7, "cuts_per_bar": 0.256, "on_beat_cut_ratio": 0.0 }
     ],
     "cuts": [
       {

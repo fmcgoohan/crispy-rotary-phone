@@ -26,15 +26,17 @@
       "values": [-80.0, -71.24, -52.18, -38.9, -31.42, -28.07, -26.55, -25.91]
     },
     "spectral_centroid_hz": {
+      "_note": "First frame is silent: value backfilled from the first valid centroid (hold-last convention) so interpolation never sweeps through a sentinel.",
       "unit": "hz",
       "start_seconds": 0.0,
       "hop_seconds": 0.01,
-      "values": [0.0, 812.4, 1450.7, 2103.2, 2377.9, 2412.5, 2390.1, 2405.8]
+      "values": [812.4, 812.4, 1450.7, 2103.2, 2377.9, 2412.5, 2390.1, 2405.8]
     },
     "onsets": {
-      "_note": "~950 onsets in the real document; strengths normalized to this channel's max.",
+      "_note": "~950 onsets in the real document; strengths are raw envelope values divided by strength_reference (p98 of the channel's onset envelope), clamped to [0,1].",
       "times": [0.614, 1.109, 1.612, 2.108, 2.611, 3.11],
-      "strengths": [0.82, 0.44, 0.91, 0.47, 0.88, 0.95]
+      "strengths": [0.82, 0.44, 0.91, 0.47, 0.88, 0.95],
+      "strength_reference": 14.27
     }
   },
   "stems": {
@@ -49,11 +51,12 @@
         "unit": "hz",
         "start_seconds": 0.0,
         "hop_seconds": 0.01,
-        "values": [0.0, 0.0, 0.0, 0.0, 1104.6, 1310.2, 1287.5, 1295.0]
+        "values": [1104.6, 1104.6, 1104.6, 1104.6, 1104.6, 1310.2, 1287.5, 1295.0]
       },
       "onsets": {
         "times": [16.102, 16.598, 17.341],
-        "strengths": [0.71, 0.38, 0.64]
+        "strengths": [0.71, 0.38, 0.64],
+        "strength_reference": 8.65
       }
     },
     "drums": {
@@ -67,12 +70,13 @@
         "unit": "hz",
         "start_seconds": 0.0,
         "hop_seconds": 0.01,
-        "values": [0.0, 3210.5, 4870.2, 5102.8, 4995.1, 5010.7, 4988.3, 5001.9]
+        "values": [3210.5, 3210.5, 4870.2, 5102.8, 4995.1, 5010.7, 4988.3, 5001.9]
       },
       "onsets": {
-        "_note": "Drum onsets are the primary rhythmic event stream for visual mapping.",
+        "_note": "Drum onsets are the primary rhythmic event stream for visual mapping. The 1.0 is a clamped above-reference accent.",
         "times": [0.613, 1.11, 1.611, 2.109, 2.61, 3.109],
-        "strengths": [1.0, 0.52, 0.97, 0.55, 0.94, 0.98]
+        "strengths": [1.0, 0.52, 0.97, 0.55, 0.94, 0.98],
+        "strength_reference": 21.53
       }
     },
     "bass": {
@@ -86,11 +90,12 @@
         "unit": "hz",
         "start_seconds": 0.0,
         "hop_seconds": 0.01,
-        "values": [0.0, 210.4, 180.7, 155.2, 148.9, 150.3, 149.6, 151.1]
+        "values": [210.4, 210.4, 180.7, 155.2, 148.9, 150.3, 149.6, 151.1]
       },
       "onsets": {
         "times": [0.615, 2.612, 4.61],
-        "strengths": [0.88, 0.79, 0.83]
+        "strengths": [0.88, 0.79, 0.83],
+        "strength_reference": 6.31
       }
     },
     "other": {
@@ -104,16 +109,23 @@
         "unit": "hz",
         "start_seconds": 0.0,
         "hop_seconds": 0.01,
-        "values": [0.0, 950.2, 1620.8, 1988.4, 2044.0, 2071.3, 2059.6, 2063.2]
+        "values": [950.2, 950.2, 1620.8, 1988.4, 2044.0, 2071.3, 2059.6, 2063.2]
       },
       "onsets": {
         "times": [0.62, 4.612, 8.605],
-        "strengths": [0.66, 0.71, 0.69]
+        "strengths": [0.66, 0.71, 0.69],
+        "strength_reference": 5.92
       }
     }
   },
   "vocal_activity": {
     "_note": "No vocals during the intro (0-15.6) or outro (211.3-242.5); the bridge is only partly sung.",
+    "params": {
+      "enter_db": -35.0,
+      "exit_db": -45.0,
+      "min_region_seconds": 0.3,
+      "min_gap_seconds": 0.2
+    },
     "regions": [
       { "start_seconds": 16.09, "end_seconds": 44.83, "mean_rms_db": -24.31 },
       { "start_seconds": 46.02, "end_seconds": 74.9, "mean_rms_db": -21.05 },

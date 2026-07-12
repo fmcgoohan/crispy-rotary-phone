@@ -39,8 +39,8 @@
           "evidence": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string", "enum": ["audio_novelty", "lyric_repetition"] },
-            "description": "Which detectors support this section. Both = strong; audio_novelty alone is common for instrumentals and intros."
+            "items": { "type": "string", "enum": ["audio_novelty", "lyric_repetition", "supplied_markup"] },
+            "description": "Which detectors support this section. supplied_markup = a section header in the supplied lyrics file (via lyrics.json supplied_markup); it dominates label assignment when present. audio_novelty alone is common for instrumentals and intros."
           }
         }
       }
@@ -61,11 +61,16 @@
         },
         "per_section": {
           "type": "array",
-          "description": "Parallel to sections (same order, same length).",
+          "description": "One entry per section, written in section order but keyed by section_index so the linkage survives a consumer filtering or re-sorting sections.",
           "items": {
             "type": "object",
-            "required": ["cuts_per_bar", "on_beat_cut_ratio"],
+            "required": ["section_index", "cuts_per_bar", "on_beat_cut_ratio"],
             "properties": {
+              "section_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Index into sections[]."
+              },
               "cuts_per_bar": { "type": "number", "minimum": 0 },
               "on_beat_cut_ratio": { "$ref": "common.schema.json#/$defs/confidence" }
             }

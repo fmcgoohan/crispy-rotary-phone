@@ -4,7 +4,7 @@
   "title": "audio_features.json — tempo, beats, onsets, envelopes, loudness, vocal activity",
   "description": "All dense series use the timeseries convention (common.schema.json) at a 10 ms hop and are sampled at arbitrary t via linear interpolation; beats/onsets are sorted event lists queried by binary search. This document owns the beat grid: every beat/bar index anywhere in the library refers to it.",
   "type": "object",
-  "required": ["schema_version", "track_id", "duration_seconds", "tempo", "beats", "mix", "stems", "vocal_activity"],
+  "required": ["schema_version", "track_id", "duration_seconds", "tempo", "beats", "loudness", "mix", "stems", "vocal_activity"],
   "properties": {
     "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
     "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
@@ -72,8 +72,19 @@
     "vocal_activity": {
       "type": "object",
       "description": "Regions where the vocal stem is active, from hysteresis thresholding of its RMS envelope. lyrics.json measures its coverage against these.",
-      "required": ["regions"],
+      "required": ["params", "regions"],
       "properties": {
+        "params": {
+          "type": "object",
+          "description": "The hysteresis parameters that produced these regions — embedded (per the schema README params policy) so a consumer can compare regions across tracks analyzed under different settings.",
+          "required": ["enter_db", "exit_db", "min_region_seconds", "min_gap_seconds"],
+          "properties": {
+            "enter_db": { "type": "number", "description": "Vocal-stem RMS (dBFS) above which a region opens." },
+            "exit_db": { "type": "number", "description": "RMS below which an open region closes." },
+            "min_region_seconds": { "type": "number", "minimum": 0 },
+            "min_gap_seconds": { "type": "number", "minimum": 0, "description": "Regions closer than this are merged." }
+          }
+        },
         "regions": {
           "type": "array",
           "items": {
@@ -101,17 +112,22 @@
         },
         "spectral_centroid_hz": {
           "$ref": "common.schema.json#/$defs/timeseries",
-          "description": "unit 'hz'; 0.0 where the frame is below the silence floor (undefined centroid)."
+          "description": "unit 'hz'. Frames below the silence floor hold the last valid centroid (frames before the first valid one are backfilled from it), so the series is everywhere-interpolable with no sentinel values. Whether anything is playing is rms_db's job, not this field's."
         },
         "onsets": {
           "type": "object",
-          "required": ["times", "strengths"],
+          "required": ["times", "strengths", "strength_reference"],
           "properties": {
             "times": { "$ref": "common.schema.json#/$defs/event_times" },
             "strengths": {
               "type": "array",
               "items": { "type": "number", "minimum": 0, "maximum": 1 },
-              "description": "Parallel to times; onset-envelope value normalized to this channel's max. Same length as times."
+              "description": "Parallel to times, same length; raw onset-envelope value divided by strength_reference, clamped to [0, 1]. The robust (p98) reference keeps values comparable across tracks: 'drum strength > 0.6' means roughly the same thing everywhere, and one outlier accent cannot compress the rest toward 0."
+            },
+            "strength_reference": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "98th percentile of this channel's raw onset-strength envelope — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference."
             }
           }
         }

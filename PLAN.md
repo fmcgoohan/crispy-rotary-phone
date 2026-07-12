@@ -140,6 +140,10 @@ serialization, so there is exactly one code path that writes JSON.
   `source_audio.flac` (16-bit) inside the track directory, so the library is
   self-contained even if the original file moves. The original is referenced by
   path in `source.json`, never re-read after ingest. See OQ-2.
+- **Original video is referenced, not copied**, by default; config
+  `ingest.copy_video: true` copies it into the track dir for a fully
+  self-contained library at the cost of size (review 001, R-7). Without the
+  copy, video re-analysis fails loudly if the original path has gone stale.
 - **Lyrics file** (optional): copied verbatim into the track dir as
   `lyrics_input.lrc` / `lyrics_input.txt`, hashed, and registered in
   `source.json`. `.lrc` timestamps are treated as *hints*, not truth (they are
@@ -198,12 +202,19 @@ vocal stem only.
   The honest downbeat tracker (madmom DBN) has a model-license problem
   (CC BY-NC-SA) and Python 3.11 packaging friction — see OQ-4.
 - **Onsets**: `librosa.onset.onset_detect` per stem (drums are the load-bearing
-  one for visuals) and for the mix; sorted times, plus per-onset strength.
+  one for visuals) and for the mix; sorted times, plus per-onset strength
+  normalized by the channel's p98 onset-envelope value (robust reference,
+  recorded in the document as `strength_reference`) and clamped to [0, 1], so
+  "drum strength > 0.6" means roughly the same thing across tracks and one
+  outlier accent can't compress the rest toward 0 (review 001, R-1).
 - **RMS/loudness envelope**: RMS in dBFS at the 10 ms hop, per mix and per
   stem, as uniform-hop series. Plus one scalar **integrated LUFS**
   (EBU R128 via `pyloudnorm`) for the mix, so the mapping engine can normalize
   across tracks.
-- **Spectral centroid**: Hz at the same hop, per mix and per stem.
+- **Spectral centroid**: Hz at the same hop, per mix and per stem. Silent
+  frames hold the last valid centroid (backfilled at the start) instead of a
+  0.0 sentinel, so the series interpolates cleanly everywhere; "is anything
+  playing" is `rms_db`'s job (review 001, R-2).
 - **Vocal-activity regions**: hysteresis thresholding on the vocal stem's RMS
   envelope (enter at −35 dBFS, exit at −45 dBFS, min region 300 ms, min gap
   200 ms — all config), emitting sorted intervals with mean level. Threshold
@@ -218,7 +229,11 @@ Two paths, one output document:
   transcript words via fuzzy sequence alignment (`rapidfuzz`, Needleman-Wunsch
   style over normalized tokens). Supplied text is the display truth; Whisper
   provides the timing. `.lrc` line timestamps, when present, constrain the
-  alignment search window. Alternative considered: Montreal Forced Aligner
+  alignment search window. **Section-header lines** (`[Verse 1]`, `[Chorus]`
+  and the like, common in real lyric files) are detected, excluded from
+  `lines[]` and from coverage math (they are not sung), and recorded as
+  `supplied_markup` — gold-standard structure evidence consumed by stage 6
+  (review 001, R-3). Alternative considered: Montreal Forced Aligner
   (proper forced alignment, better timing on clean speech) — rejected for v1
   as a heavy non-Python toolchain that underperforms on sung vocals without a
   custom acoustic model. See OQ-6.
@@ -312,7 +327,10 @@ Two paths, one output document:
      musical positions is chorus evidence; unique blocks between choruses are
      verse evidence.
   Fusion: novelty proposes boundaries (snapped to the nearest downbeat);
-  lyric clusters label them (`chorus` for the dominant repeated cluster,
+  lyric clusters label them. When the supplied lyrics file carried section
+  headers, they arrive via `lyrics.json` `supplied_markup` as a third evidence
+  source that dominates label assignment (review 001, R-3). Lyric clusters
+  otherwise label boundaries (`chorus` for the dominant repeated cluster,
   `verse`, `intro`/`outro` by position, `bridge` for a late unique section,
   `instrumental` when a section has no vocal activity). Every section carries
   `confidence` and `evidence: ["audio_novelty", "lyric_repetition"]` (either

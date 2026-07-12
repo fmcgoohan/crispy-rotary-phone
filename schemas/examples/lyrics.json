@@ -53,6 +53,27 @@
       "words": []
     }
   ],
+  "supplied_markup": [
+    {
+      "_note": "Section headers found in the supplied .lrc: excluded from lines[] and coverage, surfaced to structure.json as supplied_markup evidence. 4 further headers truncated.",
+      "text": "[Verse 1]",
+      "label": "verse",
+      "source_line_index": 0,
+      "hint_seconds": 15.6
+    },
+    {
+      "text": "[Chorus]",
+      "label": "chorus",
+      "source_line_index": 10,
+      "hint_seconds": 45.5
+    },
+    {
+      "text": "[Bridge]",
+      "label": "bridge",
+      "source_line_index": 28,
+      "hint_seconds": 135.4
+    }
+  ],
   "untranscribed_regions": [
     {
       "_note": "Final-chorus ad-libs ('oh-oh-oh' vocal runs): vocal activity present, no reliable words. 39 more lines truncated from `lines` above.",

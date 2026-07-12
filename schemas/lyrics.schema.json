@@ -4,7 +4,7 @@
   "title": "lyrics.json — timed lyrics with confidence and honesty flags",
   "description": "Produced either by aligning a supplied lyrics file to the audio (mode 'aligned') or by transcribing the isolated vocal stem with Whisper (mode 'transcribed'). Uncertainty is explicit: per-word confidence, per-line flags, and untranscribed_regions listing sung passages the system could not read. Consumers must treat flagged content as suspect rather than assume completeness.",
   "type": "object",
-  "required": ["schema_version", "track_id", "mode", "language", "lines", "untranscribed_regions", "coverage"],
+  "required": ["schema_version", "track_id", "mode", "language", "engine", "lines", "untranscribed_regions", "coverage"],
   "properties": {
     "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
     "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
@@ -71,6 +71,31 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "supplied_markup": {
+      "type": "array",
+      "description": "Present in aligned mode when the supplied lyrics file contained section-header lines like '[Verse 1]' or '[Chorus]'. Header lines are excluded from lines[] and from coverage math (they are not sung); they are recorded here and feed structure.json section labeling as 'supplied_markup' evidence. Sorted by source_line_index.",
+      "items": {
+        "type": "object",
+        "required": ["text", "source_line_index"],
+        "properties": {
+          "text": { "type": "string", "description": "The raw header line, e.g. '[Chorus]'." },
+          "label": {
+            "type": "string",
+            "enum": ["intro", "verse", "chorus", "bridge", "outro", "other"],
+            "description": "Normalized section label when recognizable; 'other' for headers that don't map to the structure vocabulary."
+          },
+          "source_line_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "0-based line number in the supplied lyrics file."
+          },
+          "hint_seconds": {
+            "$ref": "common.schema.json#/$defs/seconds",
+            "description": "Present when the file is .lrc and the header line carried a timestamp."
           }
         }
       }

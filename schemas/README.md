@@ -38,6 +38,11 @@ worked example for each under `examples/`, drafted for a hypothetical
   document except `manifest.json`.
 - **`flags`** are arrays of lowercase snake_case codes from a vocabulary
   enumerated in each schema; consumers must tolerate unknown codes.
+- **Parameter embedding**: wherever a consumer might need to reinterpret or
+  compare a field across tracks (detector thresholds, hysteresis levels,
+  on-beat windows, normalization references), the producing stage embeds a
+  small params block next to the data; everywhere else the manifest's
+  per-stage `config_hash` suffices.
 - Keys prefixed with `_` (used in the examples for truncation notes) are
   documentation-only and never produced by the tool; schemas don't declare
   them and consumers ignore unknown keys.

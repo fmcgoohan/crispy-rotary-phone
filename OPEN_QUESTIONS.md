@@ -4,6 +4,10 @@ Every judgment call a reviewer might dispute, with the answer currently baked
 into `PLAN.md` and the schemas. Changing an answer here changes the plan, not
 code — nothing is implemented yet.
 
+**Review status:** all sixteen questions were dispositioned (all agreed) in
+`docs/reviews/001-phase0-plan.md`; resolutions are noted inline below where
+the review changed the design (OQ-2, OQ-5, OQ-16).
+
 ---
 
 **OQ-1 — What bytes define `track_id`?**
@@ -24,6 +28,9 @@ track. The original *video* is the exception: copying it would double library
 size, so video re-analysis requires the original path to still be valid. Flag
 for review: is "video re-runs may break if the file moves" acceptable, or
 should video inputs be copied too (config flag)?
+**Resolution (review 001, R-7):** agreed; path-staleness is acceptable, and
+`ingest.copy_video` (default `false`) is added to the config design now as
+the escape hatch rather than retrofitted later.
 
 **OQ-3 — Are stems retained on disk?**
 **Recommendation: retain by default (16-bit FLAC, ~40–60 MB/track),
@@ -50,6 +57,10 @@ schema is agnostic to the values. Reviewer question: should thresholds be
 relative to the stem's own loudness rather than absolute dBFS? (Probably yes
 eventually; absolute is simpler and stems from the same separator are fairly
 consistent.)
+**Resolution (review 001, R-5):** agreed for v1; the threshold values are now
+embedded in the document as `vocal_activity.params` so regions are
+interpretable across tracks. Revisit relative thresholds only if M3
+calibration shows separator output levels vary more than expected.
 
 **OQ-6 — Lyric alignment method.**
 Options: fuzzy-anchor supplied lyrics to Whisper's word stream (chosen);
@@ -144,3 +155,7 @@ Supplied lyric files are copied into the track dir and embedded in
 problem if libraries are ever shared/synced. **Recommendation: accept for
 v1; note in the eventual README that track directories contain copyrighted
 text/transcriptions and must not be published.** No schema change needed now.
+**Resolution (review 001, R-8):** agreed and extended — the same
+do-not-publish caveat covers `frames/` (stills from a copyrighted video) and
+`stems/` (derivative audio), not just lyric text. One README line covers all
+three.
