@@ -1,0 +1,69 @@
+name: Claude PR Review
+
+# Automated first-pass review against docs/reviews/CHECKLIST.md.
+# External (human) review remains the gate for milestone/design decisions.
+# Default trigger permissions only: automation mode runs on PR events from
+# users with write access; no allowed_non_write_users (public repo).
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    # Fork PRs don't receive repository secrets — skip instead of failing
+    # red; outside contributions get manual review (review 004, A-1).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A new push cancels the in-flight review (review 004, A-3).
+    concurrency:
+      group: pr-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      # A-2: if the `gh pr comment` summary 403s on first run, add
+      # `issues: write` here (kept off preemptively for least privilege).
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ffmpeg (required by the smoke tests)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are the automated first-pass reviewer for this repository.
+            The PR branch is already checked out in the working directory.
+
+            1. Read docs/reviews/CHECKLIST.md and CLAUDE.md, then review the
+               PR diff against them (`gh pr diff` for the diff; read full
+               files for context as needed).
+            2. Run the test suite: `uv sync`, then `uv run pytest -q`.
+               Report the exact result in your summary.
+            3. Post findings as inline comments using
+               `mcp__github_inline_comment__create_inline_comment` (with
+               `confirmed: true`). Each finding states a severity —
+               [blocker], [major], [minor], or [nit] — and cites the
+               checklist item it violates (e.g. D3, S1, H2, T2).
+            4. Post one top-level summary via `gh pr comment`: test results,
+               finding count by severity, and which checklist areas the PR
+               touches. If there are no findings, say so plainly.
+
+            Hard limits: do NOT approve or request changes on the PR, do NOT
+            push commits, do NOT modify files, do NOT create or close issues.
+            Only post GitHub comments — don't submit review text as messages.
+          claude_args: |
+            --max-turns 25
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(uv sync:*),Bash(uv run:*)"
