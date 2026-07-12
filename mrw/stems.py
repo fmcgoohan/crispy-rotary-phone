@@ -90,6 +90,9 @@ def _separate(flac_path: Path, out_dir: Path, model_name: str, device: str) -> N
     if device == "cpu":
         # OQ-13: stem files carry no rounding layer, so cross-run byte
         # identity on CPU requires eliminating thread-order float jitter.
+        # Process-global and deliberately not restored — fine for the
+        # one-shot CLI; a future combined-stage run sharing this process
+        # must set its own threading policy after separation (D5).
         torch.set_num_threads(1)
 
     model = get_model(model_name)
@@ -205,6 +208,10 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             # (none exist yet — M3+); then the files go away and the
             # manifest tells any later re-run to regenerate.
             shutil.rmtree(tmp_dir)
+            if stems_dir.exists():
+                # retain flipped true→false: drop the previously-retained
+                # stems too, so `retained: false` reflects disk reality (H2).
+                shutil.rmtree(stems_dir)
 
         _record(
             StemsState(

@@ -161,6 +161,26 @@ def test_retain_false_leaves_no_stems(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
+def test_retain_flip_removes_previously_retained_stems(tmp_path: Path) -> None:
+    # H2 (M2 review round 2): retain true→false must not leave stale stems/
+    # on disk contradicting `retained: false` in the manifest.
+    mix = tmp_path / "mix6.wav"
+    _write_mix(mix, seconds=6.0)
+    library = tmp_path / "lib"
+    track_id = _ingest(mix, library)
+    track_dir = library / track_id
+
+    _run_stems(track_id, library, _cpu_config(tmp_path, retain=True))
+    assert (track_dir / "stems").is_dir()
+
+    _run_stems(track_id, library, _cpu_config(tmp_path, retain=False))
+    assert not (track_dir / "stems").exists()
+    manifest = json.loads((track_dir / "manifest.json").read_text())
+    assert manifest["stems"]["status"] == "ok"
+    assert manifest["stems"]["retained"] is False
+
+
+@pytest.mark.slow
 def test_silent_input_produces_finite_near_silent_stems(tmp_path: Path) -> None:
     # H2 (M2 review): silent input must not NaN — it separates unnormalized.
     import numpy as np
