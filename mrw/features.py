@@ -206,11 +206,14 @@ def _integrated_lufs(stereo) -> float:
 def _vocal_activity(vocal_rms_db, fcfg: config.FeaturesConfig) -> VocalActivity:
     import numpy as np
 
+    # D3 (PR #6 review): config values pass through the precision contract
+    # like every other document field — a non-default mrw.toml must not be
+    # able to produce out-of-contract precision.
     params = VocalActivityParams(
-        enter_db=fcfg.vocal_enter_db,
-        exit_db=fcfg.vocal_exit_db,
-        min_region_seconds=fcfg.vocal_min_region_seconds,
-        min_gap_seconds=fcfg.vocal_min_gap_seconds,
+        enter_db=canonical.round_db(fcfg.vocal_enter_db),
+        exit_db=canonical.round_db(fcfg.vocal_exit_db),
+        min_region_seconds=canonical.round_seconds(fcfg.vocal_min_region_seconds),
+        min_gap_seconds=canonical.round_seconds(fcfg.vocal_min_gap_seconds),
     )
     spans: list[list[int]] = []
     active = False

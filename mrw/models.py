@@ -11,7 +11,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-SCHEMA_VERSION = "1.0.0"
+# Per-document schema versions (PR #6 review, S2: never share a version
+# constant across documents — schemas evolve independently).
+SOURCE_SCHEMA_VERSION = "1.0.0"
+AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -80,7 +83,7 @@ class LyricsInput(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    schema_version: str = SCHEMA_VERSION
+    schema_version: str = SOURCE_SCHEMA_VERSION
     track_id: str
     file: SourceFile
     normalized_audio: NormalizedAudio
@@ -152,7 +155,7 @@ class VocalActivity(BaseModel):
 
 
 class AudioFeaturesDocument(BaseModel):
-    schema_version: str = SCHEMA_VERSION
+    schema_version: str = AUDIO_FEATURES_SCHEMA_VERSION
     track_id: str
     duration_seconds: float
     tempo: Tempo
