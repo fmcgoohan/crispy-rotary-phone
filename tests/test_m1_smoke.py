@@ -150,6 +150,17 @@ def test_flac_decodes_to_expected_sample_count(
         )
 
 
+def test_video_source_document_is_deterministic(
+    fixture_mp4: Path, tmp_path: Path
+) -> None:
+    # T2 for the video path (automated review on PR #2): fps and frame_count
+    # derivation are new logic — prove byte-identity, don't assert it.
+    dir_a = _ingest(fixture_mp4, tmp_path / "lib_a")
+    dir_b = _ingest(fixture_mp4, tmp_path / "lib_b")
+    assert dir_a.name == dir_b.name
+    assert (dir_a / "source.json").read_bytes() == (dir_b / "source.json").read_bytes()
+
+
 def test_txt_lyrics_registration(fixture_wav: Path, tmp_path: Path) -> None:
     lyrics = tmp_path / "words.txt"
     lyrics.write_text("First line of words\nSecond line\n\nThird after a blank\n")
