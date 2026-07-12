@@ -14,26 +14,23 @@ in unreleased 4.1 alphas); we use the stable lower-level surface
 
 from __future__ import annotations
 
-import re
 import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, config, hashing
-from .library import Library
+from . import TOOL_VERSION, config
+from .library import Library, PrerequisiteError
 from .models import RunMetadata, StemsState
 
 STEM_NAMES = ("vocals", "drums", "bass", "other")
 
+__all__ = ["STEM_NAMES", "StemsError", "PrerequisiteError", "run_stems", "fetch_model"]
+
 
 class StemsError(RuntimeError):
     """Stage failure — recorded in the manifest as status=failed; exit 1."""
-
-
-class PrerequisiteError(RuntimeError):
-    """Bad invocation / missing prerequisites — nothing recorded; exit 2."""
 
 
 @dataclass
@@ -42,23 +39,6 @@ class StemsResult:
     device: str
     retained: bool
     already_done: bool
-
-
-def resolve_track_id(track: str, library: Library) -> str:
-    """Accept a track_id or a media path (re-resolved by content hash)."""
-    if re.fullmatch(r"[0-9a-f]{16}", track):
-        if library.manifest_path(track).is_file():
-            return track
-        raise PrerequisiteError(f"no such track in library: {track}")
-    path = Path(track)
-    if path.is_file():
-        track_id = hashing.track_id_from_sha(hashing.sha256_file(path))
-        if library.manifest_path(track_id).is_file():
-            return track_id
-        raise PrerequisiteError(
-            f"{path.name} (track {track_id}) is not ingested — run `mrw ingest` first"
-        )
-    raise PrerequisiteError(f"not a track_id or existing file: {track}")
 
 
 def _resolve_device(setting: str) -> str:
@@ -152,7 +132,7 @@ def _separate(
 
 
 def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
-    track_id = resolve_track_id(track, library)
+    track_id = library.resolve_track_id(track)
     manifest = library.read_manifest(track_id)
     if manifest is None or manifest.documents.source.status != "ok":
         raise PrerequisiteError(f"track {track_id} has no successful ingest")
