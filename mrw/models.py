@@ -13,7 +13,9 @@ from pydantic import BaseModel
 
 SCHEMA_VERSION = "1.0.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
-MANIFEST_SCHEMA_VERSION = "1.1.0"
+# 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
+# MPS-fallback reason for batch runs).
+MANIFEST_SCHEMA_VERSION = "1.2.0"
 
 Status = Literal["ok", "pending", "failed", "stale", "not_applicable"]
 
@@ -120,6 +122,7 @@ class StemsState(BaseModel):
     config_hash: Optional[str] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
+    warning: Optional[str] = None
 
 
 class Manifest(BaseModel):

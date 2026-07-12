@@ -184,6 +184,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
     tmp_dir = track_dir / ".stems.tmp"
+    mps_fallback_error: str | None = None
 
     def _record(state: StemsState) -> None:
         manifest.stems = state
@@ -198,7 +199,6 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir()
-        mps_fallback_error: str | None = None
         try:
             _separate(flac_path, tmp_dir, cfg.stems.model, device, cfg.stems.cpu_threads)
         except Exception as exc:
@@ -240,6 +240,11 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 retained=cfg.stems.retain,
                 config_hash=stems_hash,
                 run=run,
+                warning=(
+                    f"mps separation failed, fell back to cpu: {mps_fallback_error}"
+                    if mps_fallback_error
+                    else None
+                ),
             )
         )
         return StemsResult(
@@ -254,12 +259,17 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     except Exception as exc:  # fail loudly, never leave partial stems/
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
+        message = str(exc)
+        if mps_fallback_error:
+            # Don't discard the original MPS failure when the CPU retry
+            # also fails (PR #5 review round 2).
+            message = f"cpu retry failed after mps failure ({mps_fallback_error}): {message}"
         _record(
             StemsState(
                 status="failed",
                 retained=cfg.stems.retain,
                 config_hash=stems_hash,
-                error=str(exc)[:500],
+                error=message[:500],
             )
         )
-        raise StemsError(str(exc)[:500]) from exc
+        raise StemsError(message[:500]) from exc
