@@ -72,9 +72,14 @@ jobs:
                finding count by severity, and which checklist areas the PR
                touches. If there are no findings, say so plainly.
 
+            Budget: you have a hard turn cap. Read the diff and only the
+            files it touches; don't re-read files you've seen. Post your
+            findings and summary BEFORE any deep exploration — if you are
+            running low on turns, post what you have rather than nothing.
+
             Hard limits: do NOT approve or request changes on the PR, do NOT
             push commits, do NOT modify files, do NOT create or close issues.
             Only post GitHub comments — don't submit review text as messages.
           claude_args: |
-            --max-turns 25
+            --max-turns 50
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(uv sync:*),Bash(uv run:*)"
