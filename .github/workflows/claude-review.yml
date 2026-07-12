@@ -11,10 +11,19 @@ on:
 
 jobs:
   review:
+    # Fork PRs don't receive repository secrets — skip instead of failing
+    # red; outside contributions get manual review (review 004, A-1).
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A new push cancels the in-flight review (review 004, A-3).
+    concurrency:
+      group: pr-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: read
+      # A-2: if the `gh pr comment` summary 403s on first run, add
+      # `issues: write` here (kept off preemptively for least privilege).
       pull-requests: write
       id-token: write
     steps:
