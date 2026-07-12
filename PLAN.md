@@ -412,7 +412,10 @@ changing a video threshold marks only `video.json` (and its dependents) stale.
 ## 7. Determinism strategy
 
 The contract: **same input file + same config ⇒ byte-identical analysis
-documents** (manifest exempt). Enforced in layers:
+documents** (manifest exempt). Identity (`track_id`) is a function of file
+bytes alone; `source.json` additionally records the ingest-time
+`file.original_path`, so its byte-identity guarantee applies to re-runs of
+the same file at the same location (review 003, F-1). Enforced in layers:
 
 1. **Canonical serializer** (`canonical.py`): sorted keys OFF (schema order is
    fixed by pydantic model field order — stable and human-curated), UTF-8, no
