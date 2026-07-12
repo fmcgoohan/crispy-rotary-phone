@@ -36,6 +36,17 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # M2: keep the slow Demucs tests in review (the CPU double-run IS the
+      # neural-path determinism evidence) but cache the weights so it's
+      # affordable. Key on the model name; bump when stems.model changes.
+      - name: Cache Demucs model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/torch/hub/checkpoints
+          key: demucs-htdemucs
 
       - uses: anthropics/claude-code-action@v1
         with:
