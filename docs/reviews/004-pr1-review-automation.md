@@ -60,3 +60,13 @@ never see the secret. Revisit only if collaborators are ever added.
 **Next:** merge after A-1/A-3, then M1 as a PR — the first one the automated
 reviewer handles. Compare its findings against CHECKLIST expectations; tune
 the prompt if it's noisy. External review moves to milestone boundaries.
+
+## Post-merge note (trigger model, 2026-07-12)
+
+`/install-github-app` added two workflows to main outside PR review: a
+duplicate generic auto-reviewer (`claude-code-review.yml`, removed in
+`ae55911`) and an `@claude` mention workflow (`claude.yml`) — the
+issue_comment/mention entry point this review's "confirmed right" section
+records as absent. Decision: deleted. The trigger model stands as reviewed:
+`pull_request` automation only, no mention entry point, write-access users
+only.
