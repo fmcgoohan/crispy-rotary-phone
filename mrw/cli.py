@@ -109,6 +109,37 @@ def stems(
         typer.echo(f"stems {result.track_id} [device={result.device}] {kept}")
 
 
+@app.command()
+def features(
+    track: str = typer.Argument(
+        ..., help="Track id, or a media path (re-resolved through the library)."
+    ),
+    library: Path = _LIBRARY_OPT,
+    config_path: Optional[Path] = _CONFIG_OPT,
+) -> None:
+    """Extract audio features (beats, envelopes, onsets, LUFS, vocal activity)."""
+    from .features import FeaturesError, run_features
+    from .library import PrerequisiteError
+
+    cfg = _load_config(config_path)
+    try:
+        result = run_features(track, Library(library), cfg)
+    except PrerequisiteError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    except FeaturesError as e:
+        typer.echo(f"error: features failed: {e}", err=True)
+        raise typer.Exit(1)
+
+    if result.already_done:
+        typer.echo(f"features up to date: {result.track_id} — no-op")
+    else:
+        typer.echo(
+            f"features {result.track_id}: bpm={result.bpm_global} "
+            f"vocal_regions={result.n_vocal_regions}"
+        )
+
+
 models_app = typer.Typer(help="Manage model weights.", no_args_is_help=True)
 app.add_typer(models_app, name="models")
 

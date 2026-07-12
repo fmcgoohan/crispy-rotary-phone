@@ -7,12 +7,17 @@ volatile data.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from . import canonical, hashing
 from .models import Manifest, doc_dump
+
+
+class PrerequisiteError(RuntimeError):
+    """Bad invocation / missing prerequisites — nothing recorded; exit 2."""
 
 
 class Library:
@@ -48,3 +53,20 @@ class Library:
         path.parent.mkdir(parents=True, exist_ok=True)
         text = canonical.write(path, doc_dump(document))
         return hashing.sha256_bytes(text.encode("utf-8"))
+
+    def resolve_track_id(self, track: str) -> str:
+        """Accept a track_id or a media path (re-resolved by content hash)."""
+        if re.fullmatch(r"[0-9a-f]{16}", track):
+            if self.manifest_path(track).is_file():
+                return track
+            raise PrerequisiteError(f"no such track in library: {track}")
+        path = Path(track)
+        if path.is_file():
+            track_id = hashing.track_id_from_sha(hashing.sha256_file(path))
+            if self.manifest_path(track_id).is_file():
+                return track_id
+            raise PrerequisiteError(
+                f"{path.name} (track {track_id}) is not ingested — "
+                "run `mrw ingest` first"
+            )
+        raise PrerequisiteError(f"not a track_id or existing file: {track}")

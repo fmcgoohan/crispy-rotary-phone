@@ -11,6 +11,8 @@ dependencies = [
     # demucs 4.0.1 checkpoints fail torch>=2.6 (weights_only default flip)
     "torch>=2.4,<2.6",
     "torchaudio>=2.4,<2.6",
+    "librosa>=0.11.0",
+    "pyloudnorm>=0.2.0",
 ]
 
 [dependency-groups]

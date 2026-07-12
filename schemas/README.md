@@ -28,7 +28,7 @@ worked example for each under `examples/`, drafted for a hypothetical
   audio decode. One timeline for everything, including video. Beat/bar indices
   are derivable from `audio_features.beats`.
 - **Precision** (also the determinism-rounding contract): seconds 3 dp,
-  dB 2 dp, Hz 1 dp, ratios/confidences 3 dp.
+  dB 2 dp, Hz 1 dp, BPM 1 dp, ratios/confidences 3 dp.
 - **Enums are lowercase strings**; unknown future values must not crash a
   consumer (Swift: decode as raw `String` or provide an `unknown` case).
 - **Optionality**: absent means absent; `null` is never written.

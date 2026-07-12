@@ -30,6 +30,10 @@ def round_ratio(x: float) -> float:
     return round(float(x), 3)
 
 
+def round_bpm(x: float) -> float:
+    return round(float(x), 1)
+
+
 def dumps(data: Any) -> str:
     """Serialize to the canonical text form (insertion order, trailing newline)."""
     return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=False) + "\n"

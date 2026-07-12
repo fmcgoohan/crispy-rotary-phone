@@ -33,16 +33,27 @@ class StemsConfig(BaseModel, frozen=True):
     cpu_threads: int = Field(default=1, ge=1)
 
 
+class FeaturesConfig(BaseModel, frozen=True):
+    # Vocal-activity hysteresis on the vocal stem's RMS envelope (OQ-5);
+    # the values are embedded in the document's vocal_activity.params (R-5).
+    vocal_enter_db: float = -35.0
+    vocal_exit_db: float = -45.0
+    vocal_min_region_seconds: float = 0.3
+    vocal_min_gap_seconds: float = 0.2
+
+
 class Config(BaseModel, frozen=True):
     ingest: IngestConfig = IngestConfig()
     stems: StemsConfig = StemsConfig()
-    # Later milestones add: features, lyrics, video, structure sections.
+    features: FeaturesConfig = FeaturesConfig()
+    # Later milestones add: lyrics, video, structure sections.
 
 
 # Which config subset governs each pipeline document / artifact.
 STAGE_SECTION: dict[str, str] = {
     "source": "ingest",
     "stems": "stems",
+    "audio_features": "features",
 }
 
 

@@ -11,7 +11,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-SCHEMA_VERSION = "1.0.0"
+# Per-document schema versions (PR #6 review, S2: never share a version
+# constant across documents — schemas evolve independently).
+SOURCE_SCHEMA_VERSION = "1.0.0"
+AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -80,12 +83,87 @@ class LyricsInput(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    schema_version: str = SCHEMA_VERSION
+    schema_version: str = SOURCE_SCHEMA_VERSION
     track_id: str
     file: SourceFile
     normalized_audio: NormalizedAudio
     media: Media
     lyrics_input: Optional[LyricsInput] = None
+
+
+# --- audio_features.json ----------------------------------------------------
+
+
+class Timeseries(BaseModel):
+    unit: str
+    start_seconds: float
+    hop_seconds: float
+    values: list[float]
+
+
+class Tempo(BaseModel):
+    bpm_global: float
+    confidence: float
+
+
+class Beats(BaseModel):
+    times: list[float]
+    beats_per_bar: int
+    downbeat_offset: int
+    downbeat_method: Literal["assumed_4_4_phase_fit", "model"]
+
+
+class Loudness(BaseModel):
+    integrated_lufs: float
+
+
+class Onsets(BaseModel):
+    times: list[float]
+    strengths: list[float]
+    strength_reference: float
+
+
+class ChannelFeatures(BaseModel):
+    rms_db: Timeseries
+    spectral_centroid_hz: Timeseries
+    onsets: Onsets
+
+
+class StemFeatures(BaseModel):
+    vocals: ChannelFeatures
+    drums: ChannelFeatures
+    bass: ChannelFeatures
+    other: ChannelFeatures
+
+
+class VocalActivityParams(BaseModel):
+    enter_db: float
+    exit_db: float
+    min_region_seconds: float
+    min_gap_seconds: float
+
+
+class VocalRegion(BaseModel):
+    start_seconds: float
+    end_seconds: float
+    mean_rms_db: float
+
+
+class VocalActivity(BaseModel):
+    params: VocalActivityParams
+    regions: list[VocalRegion]
+
+
+class AudioFeaturesDocument(BaseModel):
+    schema_version: str = AUDIO_FEATURES_SCHEMA_VERSION
+    track_id: str
+    duration_seconds: float
+    tempo: Tempo
+    beats: Beats
+    loudness: Loudness
+    mix: ChannelFeatures
+    stems: StemFeatures
+    vocal_activity: VocalActivity
 
 
 # --- manifest.json ----------------------------------------------------------
