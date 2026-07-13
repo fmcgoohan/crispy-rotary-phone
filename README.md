@@ -28,20 +28,16 @@ uv run pytest -q   # run the smoke tests
 ```sh
 uv run mrw ingest path/to/song.wav --lyrics path/to/song.lrc --title "Song Title"
 uv run mrw stems <track_id>        # Demucs separation → stems/{vocals,drums,bass,other}.flac
-uv run mrw features <track_id>     # beats, envelopes, onsets, LUFS, vocal activity
-uv run mrw lyrics <track_id>       # align supplied lyrics / transcribe the vocal stem
 uv run mrw status                  # list tracks and per-stage statuses
 uv run mrw export-schemas          # dump model-generated schemas for diffing
 ```
 
 ## Model weights
 
-Neural stages download model weights on first use (Demucs `htdemucs`
-~80 MB; faster-whisper `small` ~75 MB). Run `uv run mrw models fetch` once
-up front so batch runs never surprise-download. Demucs weights live in
-torch's hub cache — `~/.cache/torch/hub/checkpoints/` by default (override
-with `TORCH_HOME`); Whisper models live in the Hugging Face hub cache —
-`~/.cache/huggingface/hub/` (override with `HF_HOME`).
+Neural stages download model weights on first use (Demucs `htdemucs`,
+~80 MB). Run `uv run mrw models fetch` once up front so batch runs never
+surprise-download. Weights are cached in torch's hub cache —
+`~/.cache/torch/hub/checkpoints/` by default (override with `TORCH_HOME`).
 Stem separation runs on Apple-Silicon GPU (`mps`) when available, with an
 automatic one-shot CPU retry if MPS fails mid-separation (the manifest
 records the device that actually ran). Stem-file byte determinism is

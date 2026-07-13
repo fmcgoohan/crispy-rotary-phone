@@ -140,37 +140,6 @@ def features(
         )
 
 
-@app.command()
-def lyrics(
-    track: str = typer.Argument(
-        ..., help="Track id, or a media path (re-resolved through the library)."
-    ),
-    library: Path = _LIBRARY_OPT,
-    config_path: Optional[Path] = _CONFIG_OPT,
-) -> None:
-    """Align supplied lyrics or transcribe the vocal stem (mode per ingest)."""
-    from .library import PrerequisiteError
-    from .lyrics import LyricsError, run_lyrics
-
-    cfg = _load_config(config_path)
-    try:
-        result = run_lyrics(track, Library(library), cfg)
-    except PrerequisiteError as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-    except LyricsError as e:
-        typer.echo(f"error: lyrics failed: {e}", err=True)
-        raise typer.Exit(1)
-
-    if result.already_done:
-        typer.echo(f"lyrics up to date: {result.track_id} — no-op")
-    else:
-        typer.echo(
-            f"lyrics {result.track_id} [{result.mode}]: {result.n_lines} lines, "
-            f"{result.n_untranscribed} untranscribed regions"
-        )
-
-
 models_app = typer.Typer(help="Manage model weights.", no_args_is_help=True)
 app.add_typer(models_app, name="models")
 
@@ -178,16 +147,12 @@ app.add_typer(models_app, name="models")
 @models_app.command("fetch")
 def models_fetch(config_path: Optional[Path] = _CONFIG_OPT) -> None:
     """Download model weights up front so batch runs never surprise-download."""
-    from .lyrics import fetch_whisper_model
     from .stems import fetch_model
 
     cfg = _load_config(config_path)
     typer.echo(f"fetching '{cfg.stems.model}' (first run downloads ~80-320 MB)...")
     cache_dir = fetch_model(cfg.stems.model)
     typer.echo(f"model '{cfg.stems.model}' ready; cache: {cache_dir}")
-    typer.echo(f"fetching whisper '{cfg.lyrics.model}' (first run ~75-500 MB)...")
-    whisper_dir = fetch_whisper_model(cfg.lyrics.model)
-    typer.echo(f"whisper '{cfg.lyrics.model}' ready; cache: {whisper_dir}")
 
 
 @app.command()

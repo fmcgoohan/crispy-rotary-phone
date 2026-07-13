@@ -15,7 +15,6 @@ from pydantic import BaseModel
 # constant across documents — schemas evolve independently).
 SOURCE_SCHEMA_VERSION = "1.0.0"
 AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
-LYRICS_SCHEMA_VERSION = "1.0.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -165,61 +164,6 @@ class AudioFeaturesDocument(BaseModel):
     mix: ChannelFeatures
     stems: StemFeatures
     vocal_activity: VocalActivity
-
-
-# --- lyrics.json ------------------------------------------------------------
-
-
-class LyricsEngine(BaseModel):
-    name: str
-    model: str
-
-
-class LyricsWord(BaseModel):
-    text: str
-    start_seconds: float
-    end_seconds: float
-    confidence: float
-
-
-class LyricsLine(BaseModel):
-    text: str
-    start_seconds: float
-    end_seconds: float
-    confidence: Optional[float] = None
-    flags: list[str]
-    words: list[LyricsWord]
-
-
-class SuppliedMarkup(BaseModel):
-    text: str
-    label: Optional[
-        Literal["intro", "verse", "chorus", "bridge", "outro", "other"]
-    ] = None
-    source_line_index: int
-    hint_seconds: Optional[float] = None
-
-
-class UntranscribedRegion(BaseModel):
-    start_seconds: float
-    end_seconds: float
-
-
-class LyricsCoverage(BaseModel):
-    vocal_activity_covered_ratio: float
-    lines_flagged_ratio: float
-
-
-class LyricsDocument(BaseModel):
-    schema_version: str = LYRICS_SCHEMA_VERSION
-    track_id: str
-    mode: Literal["aligned", "transcribed"]
-    language: str
-    engine: LyricsEngine
-    lines: list[LyricsLine]
-    supplied_markup: Optional[list[SuppliedMarkup]] = None
-    untranscribed_regions: list[UntranscribedRegion]
-    coverage: LyricsCoverage
 
 
 # --- manifest.json ----------------------------------------------------------
