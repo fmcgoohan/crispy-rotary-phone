@@ -195,7 +195,7 @@ def _transcribe(
         # file-relative.
         clips = clips_from_regions(vocal_regions, cfg.clip_padding_seconds)
         decode["clip_timestamps"] = ",".join(
-            str(round(x, 3)) for pair in clips for x in pair
+            str(canonical.round_seconds(x)) for pair in clips for x in pair
         )
     segments_iter, info = model.transcribe(
         str(vocals_path), language=language, **decode
