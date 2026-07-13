@@ -45,11 +45,27 @@ class FeaturesConfig(BaseModel, frozen=True):
     phase_fit_window_seconds: float = Field(default=0.03, gt=0)
 
 
+class LyricsConfig(BaseModel, frozen=True):
+    # OQ-7: faster-whisper on the isolated vocal stem; `small` default.
+    model: str = "small"
+    # Optional language pin; None = detect once and record (schema).
+    language: str | None = None
+    # Flag thresholds (schema-documented vocabulary; review 006 F-1 policy:
+    # output-affecting tunables are config so they join the config_hash).
+    confidence_threshold: float = 0.5  # low_confidence: mean word conf below
+    long_word_seconds: float = 2.5  # long_word_duration (melisma)
+    no_speech_threshold: float = 0.5  # possibly_non_lexical (transcribed)
+    compression_ratio_threshold: float = 2.4  # possibly_non_lexical
+    overlap_rms_db: float = -15.0  # overlapping_vocals: sustained loud stem
+    min_anchor_score: float = 0.6  # aligned mode: fuzzy-anchor acceptance
+
+
 class Config(BaseModel, frozen=True):
     ingest: IngestConfig = IngestConfig()
     stems: StemsConfig = StemsConfig()
     features: FeaturesConfig = FeaturesConfig()
-    # Later milestones add: lyrics, video, structure sections.
+    lyrics: LyricsConfig = LyricsConfig()
+    # Later milestones add: video, structure sections.
 
 
 # Which config subset governs each pipeline document / artifact.
@@ -57,6 +73,7 @@ STAGE_SECTION: dict[str, str] = {
     "source": "ingest",
     "stems": "stems",
     "audio_features": "features",
+    "lyrics": "lyrics",
 }
 
 
