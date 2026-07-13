@@ -24,8 +24,13 @@ from . import canonical
 
 _PUNCT = re.compile(r"[^\w']+", re.UNICODE)
 
-# Search bounds (structural, ride tool_version): how far past the cursor an
-# anchor may land, and the hint window in seconds around an .lrc timestamp.
+# Tunables classification (review 007 F-1, per the PR #7 convention):
+# min_anchor_score is the acceptance threshold and lives in LyricsConfig
+# (config_hash member). The constants below are STRUCTURAL search bounds —
+# they shape where anchoring looks, not what it accepts — and ride
+# tool_version; the interpolation bounds in _interpolate_unanchored
+# (+4 s guess, 10 s cap) are likewise structural. Promoting any of these
+# to config later is a conscious config-evolution event, not a silent edit.
 LOOKAHEAD_WORDS = 400
 HINT_BEFORE_SECONDS = 5.0
 HINT_AFTER_SECONDS = 20.0

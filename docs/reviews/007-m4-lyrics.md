@@ -104,3 +104,43 @@ cursor monotonicity + a timeline-wins stable sort, tested. Round 3: clean
 "no findings" summary comment it is prompted to leave. Operational note:
 a green review run with no new comments is a clean pass; the missing
 courtesy summary is a known reviewer quirk.
+
+## Post-merge field findings (2026-07-13, first real-track runs)
+
+Recorded per operator report; items 1–3 and 6 fixed in the m4-field-fixes
+PR (lyrics schema 1.1.0, additive); 4 is an investigation with a config
+knob landed; 5 is calibration data only.
+
+1. **Language detection on silent stem heads** — detection ran on a
+   near-silent head and locked onto Welsh (a known Whisper noise-
+   attractor), hallucinating repetition loops timestamped inside regions
+   audio_features declares instrumental. Fix: with no pin, detect on a
+   window assembled from the earliest vocal_activity regions (features is
+   already a prerequisite); provenance recorded via additive
+   `engine.language_source: pinned | detected_vocal_window`.
+2. **`outside_vocal_activity` line flag** — lines whose span overlaps no
+   vocal-activity region are flagged (additive enum member), never dropped.
+3. **`untranscribed_regions` sharpened to uncovered spans** — word-covered
+   intervals subtracted from vocal-activity regions, spans ≥
+   `lyrics.uncovered_min_seconds` (default 1.0) emitted. Field evidence: an
+   18 s missed opening verse was invisible because its merged region was
+   partially covered. Same shape; bump-level argued in the PR (additive
+   minor — no external consumers exist yet).
+4. **en-pin verse drop (open investigation)** — with `language = en`,
+   42–60 s of clean lead vocal produced no words, though the unpinned run
+   transcribed it. Cannot be reproduced synthetically; the suspected gate
+   (`no_speech_threshold`) is now a `LyricsConfig` member
+   (`decode_no_speech_threshold`, default 0.6 = engine default) so decode-
+   setting experiments are config-hash events. Needs the field track to
+   close.
+5. **`possibly_non_lexical` calibration (no tuning yet)** — fired on 41/47
+   substantially-correct lines and scored the Welsh hallucination run
+   similarly: zero discrimination on sung material. Mechanism: chorus
+   repetition legitimately inflates compression ratio. Candidate designs
+   pending multi-track data: per-window compression instead of per-segment,
+   or 2-of-3 signal logic (no_speech / compression / dictionary hit rate).
+6. **Tests** — uncovered-span computation unit-tested pure (partial
+   coverage → localized spans); synthetic out-of-region line asserts the
+   new flag; language-window assembly unit-tested; espeak fixture gained a
+   10 s silent lead-in asserting English detection with
+   `detected_vocal_window` provenance.

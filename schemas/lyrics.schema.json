@@ -23,7 +23,12 @@
       "required": ["name", "model"],
       "properties": {
         "name": { "type": "string", "description": "e.g. 'faster-whisper'." },
-        "model": { "type": "string", "description": "e.g. 'small'." }
+        "model": { "type": "string", "description": "e.g. 'small'." },
+        "language_source": {
+          "type": "string",
+          "enum": ["pinned", "detected_vocal_window"],
+          "description": "Provenance of `language`: 'pinned' from config, or 'detected_vocal_window' — detected on a window assembled from the earliest vocal_activity regions (the whole file head when no regions exist), so detection never runs on a silent stem head (review 007 field finding 1; added in 1.1.0)."
+        }
       }
     },
     "lines": {
@@ -50,10 +55,11 @@
                 "overlapping_vocals",
                 "long_word_duration",
                 "unaligned",
-                "timing_interpolated"
+                "timing_interpolated",
+                "outside_vocal_activity"
               ]
             },
-            "description": "low_confidence: mean word confidence below threshold (config, default 0.5). possibly_non_lexical: hallucination heuristics fired (no_speech_prob / compression_ratio / dictionary hit rate) — text may be invented. overlapping_vocals: sustained dense vocal-stem energy suggests harmonies; words may be merged. long_word_duration: a word exceeds ~2.5 s (melisma); timings smeared. unaligned (aligned mode): line found no transcript anchor; timing absent-quality, taken from lrc hint or neighbor interpolation. timing_interpolated: word times inferred from neighbors rather than observed."
+            "description": "low_confidence: mean word confidence below threshold (config, default 0.5). possibly_non_lexical: hallucination heuristics fired (no_speech_prob / compression_ratio / dictionary hit rate) — text may be invented. overlapping_vocals: sustained dense vocal-stem energy suggests harmonies; words may be merged. long_word_duration: a word exceeds ~2.5 s (melisma); timings smeared. unaligned (aligned mode): line found no transcript anchor; timing absent-quality, taken from lrc hint or neighbor interpolation. timing_interpolated: word times inferred from neighbors rather than observed. outside_vocal_activity: the line's span overlaps no vocal-activity region — likely hallucinated over instrumental audio; flagged, never dropped (added in 1.1.0)."
           },
           "words": {
             "type": "array",
@@ -102,7 +108,7 @@
     },
     "untranscribed_regions": {
       "type": "array",
-      "description": "Vocal-activity regions (from audio_features.json) with no word overlap — singing the system could not read. The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
+      "description": "Uncovered spans of vocal activity: the word-covered intervals are subtracted from the vocal-activity regions (audio_features.json), and remaining spans at least `uncovered_min_seconds` long (config, default 1.0) are emitted. Sharper than the 1.0.0 region-granularity definition, which hid partial misses inside partially-covered regions (review 007 field finding 3; sharpened in 1.1.0 — same shape). The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
       "items": { "$ref": "common.schema.json#/$defs/interval" }
     },
     "coverage": {

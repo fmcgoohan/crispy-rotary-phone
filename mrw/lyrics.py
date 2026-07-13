@@ -77,10 +77,56 @@ class Segment:
     words: list[WordObs]
 
 
+def vocal_window_slices(
+    regions: list[tuple[float, float]], max_seconds: float = 30.0
+) -> list[tuple[float, float]]:
+    """Earliest-first vocal-activity slices totalling ≤ max_seconds (pure).
+
+    Review 007 field finding 1: language detection on a silent stem head
+    locks onto noise-attractor languages (observed: Welsh) — detect on
+    audio that audio_features says is actually vocal.
+    """
+    out: list[tuple[float, float]] = []
+    total = 0.0
+    for start, end in sorted(regions):
+        if total >= max_seconds:
+            break
+        take = min(end - start, max_seconds - total)
+        if take > 0:
+            out.append((start, start + take))
+            total += take
+    return out
+
+
+def _detection_window_audio(vocals_path: Path, regions: list[tuple[float, float]]):
+    """16 kHz mono window assembled from the earliest vocal-activity
+    regions; the file head when no regions exist."""
+    import librosa
+    import numpy as np
+    import soundfile as sf
+
+    data, sample_rate = sf.read(vocals_path, dtype="float32", always_2d=True)
+    mono = data.mean(axis=1)
+    slices = vocal_window_slices(regions)
+    if slices:
+        parts = [
+            mono[int(s * sample_rate) : int(e * sample_rate)] for s, e in slices
+        ]
+        window = np.concatenate(parts)
+    else:
+        window = mono[: 30 * sample_rate]
+    return librosa.resample(window, orig_sr=sample_rate, target_sr=16000)
+
+
 def _transcribe(
-    vocals_path: Path, cfg: config.LyricsConfig
-) -> tuple[str, list[Segment]]:
-    """Run faster-whisper on the vocal stem. Isolated so tests stub it."""
+    vocals_path: Path,
+    cfg: config.LyricsConfig,
+    vocal_regions: list[tuple[float, float]],
+) -> tuple[str, str, list[Segment]]:
+    """Run faster-whisper on the vocal stem. Isolated so tests stub it.
+
+    Returns (language, language_source, segments).
+    """
     from faster_whisper import WhisperModel
 
     # D5 (PR #9 review): pin threads like the stems precedent — documents
@@ -89,14 +135,26 @@ def _transcribe(
     model = WhisperModel(
         cfg.model, device="cpu", compute_type="int8", cpu_threads=1, num_workers=1
     )
-    segments_iter, info = model.transcribe(
-        str(vocals_path),
+    decode = dict(
         word_timestamps=True,
         temperature=0.0,
         beam_size=1,
         best_of=1,
-        language=cfg.language,
         condition_on_previous_text=False,
+        no_speech_threshold=cfg.decode_no_speech_threshold,
+    )
+    language = cfg.language
+    language_source = "pinned"
+    if language is None:
+        # Review 007 field finding 1: never detect on the (possibly silent)
+        # stem head — use the earliest vocal-activity audio.
+        language_source = "detected_vocal_window"
+        window = _detection_window_audio(vocals_path, vocal_regions)
+        _, info = model.transcribe(window, language=None, **decode)
+        language = info.language
+
+    segments_iter, info = model.transcribe(
+        str(vocals_path), language=language, **decode
     )
     segments = []
     for seg in segments_iter:
@@ -119,7 +177,7 @@ def _transcribe(
                 ],
             )
         )
-    return info.language, segments
+    return language, language_source, segments
 
 
 def fetch_whisper_model(model_name: str) -> Path:
@@ -191,6 +249,7 @@ def _line_flags(
     base_flags: list[str],
     cfg: config.LyricsConfig,
     overlap_fraction_fn,
+    vocal_regions: list[tuple[float, float]],
     segment: Segment | None = None,
 ) -> list[str]:
     flags = list(base_flags)
@@ -207,11 +266,52 @@ def _line_flags(
         flags.append("possibly_non_lexical")
     if overlap_fraction_fn(span[0], span[1], cfg.overlap_rms_db) >= _OVERLAP_FRACTION:
         flags.append("overlapping_vocals")
+    # Review 007 field finding 2: a line whose span overlaps no vocal-
+    # activity region is likely hallucinated over instrumental audio —
+    # flagged, never dropped.
+    if not any(
+        min(span[1], r_end) > max(span[0], r_start)
+        for r_start, r_end in vocal_regions
+    ):
+        flags.append("outside_vocal_activity")
     return flags
 
 
+def uncovered_spans(
+    word_spans: list[tuple[float, float]],
+    regions: list[tuple[float, float]],
+    min_seconds: float,
+) -> list[tuple[float, float]]:
+    """Vocal-activity minus word coverage, spans ≥ min_seconds (pure).
+
+    Review 007 field finding 3: region granularity hid an 18 s missed
+    verse inside a partially-covered merged region — subtract coverage
+    instead of testing regions whole.
+    """
+    merged: list[list[float]] = []
+    for s, e in sorted(word_spans):
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    out: list[tuple[float, float]] = []
+    for r_start, r_end in sorted(regions):
+        pos = r_start
+        for s, e in merged:
+            if e <= pos or s >= r_end:
+                continue
+            if s > pos:
+                out.append((pos, min(s, r_end)))
+            pos = max(pos, e)
+        if pos < r_end:
+            out.append((pos, r_end))
+    return [(s, e) for s, e in out if e - s >= min_seconds]
+
+
 def _coverage_and_untranscribed(
-    lines: list[LyricsLine], vocal_regions: list[dict]
+    lines: list[LyricsLine],
+    vocal_regions: list[dict],
+    min_uncovered_seconds: float,
 ) -> tuple[LyricsCoverage, list[UntranscribedRegion]]:
     spans = sorted(
         (w.start_seconds, w.end_seconds) for line in lines for w in line.words
@@ -230,12 +330,15 @@ def _coverage_and_untranscribed(
     covered = sum(
         overlap(r["start_seconds"], r["end_seconds"]) for r in vocal_regions
     )
+    region_tuples = [(r["start_seconds"], r["end_seconds"]) for r in vocal_regions]
     untranscribed = [
         UntranscribedRegion(
-            start_seconds=r["start_seconds"], end_seconds=r["end_seconds"]
+            start_seconds=canonical.round_seconds(s),
+            end_seconds=canonical.round_seconds(e),
         )
-        for r in vocal_regions
-        if overlap(r["start_seconds"], r["end_seconds"]) == 0.0
+        for s, e in uncovered_spans(
+            [(m[0], m[1]) for m in merged], region_tuples, min_uncovered_seconds
+        )
     ]
     # No vocal activity at all → vacuously covered (degenerate-case
     # convention, H2): 1.0, not a division by zero.
@@ -328,7 +431,13 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
         library.write_manifest(track_id, manifest)
 
     try:
-        language, segments = _transcribe(vocals_path, cfg.lyrics)
+        region_tuples = [
+            (r["start_seconds"], r["end_seconds"])
+            for r in features_doc["vocal_activity"]["regions"]
+        ]
+        language, language_source, segments = _transcribe(
+            vocals_path, cfg.lyrics, region_tuples
+        )
         if cfg.lyrics.language:
             language = cfg.lyrics.language
         # Whisper can hallucinate timestamps past the end of quiet audio
@@ -366,7 +475,8 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                         end_seconds=canonical.round_seconds(a.end),
                         confidence=a.confidence,
                         flags=_line_flags(
-                            words, span, a.flags, cfg.lyrics, overlap_fn
+                            words, span, a.flags, cfg.lyrics, overlap_fn,
+                            region_tuples,
                         ),
                         words=words,
                     )
@@ -395,6 +505,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                             [],
                             cfg.lyrics,
                             overlap_fn,
+                            region_tuples,
                             segment=seg,
                         ),
                         words=words,
@@ -402,13 +513,19 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                 )
 
         coverage, untranscribed = _coverage_and_untranscribed(
-            lines, features_doc["vocal_activity"]["regions"]
+            lines,
+            features_doc["vocal_activity"]["regions"],
+            cfg.lyrics.uncovered_min_seconds,
         )
         document = LyricsDocument(
             track_id=track_id,
             mode=mode,
             language=language,
-            engine=LyricsEngine(name="faster-whisper", model=cfg.lyrics.model),
+            engine=LyricsEngine(
+                name="faster-whisper",
+                model=cfg.lyrics.model,
+                language_source=language_source,
+            ),
             lines=lines,
             supplied_markup=supplied_markup,
             untranscribed_regions=untranscribed,

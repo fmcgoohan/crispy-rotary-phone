@@ -58,6 +58,12 @@ class LyricsConfig(BaseModel, frozen=True):
     compression_ratio_threshold: float = 2.4  # possibly_non_lexical
     overlap_rms_db: float = -15.0  # overlapping_vocals: sustained loud stem
     min_anchor_score: float = 0.6  # aligned mode: fuzzy-anchor acceptance
+    # Review 007 field finding 3: minimum uncovered-span length emitted as
+    # an untranscribed region.
+    uncovered_min_seconds: float = 1.0
+    # Review 007 field finding 4 investigation knob: whisper's no-speech
+    # gate, exposed so decode-setting changes are config (and hash) events.
+    decode_no_speech_threshold: float = 0.6
 
 
 class Config(BaseModel, frozen=True):
