@@ -155,3 +155,48 @@ silently dropped. Resolution: whole zero-coverage regions are always
 emitted regardless of length (the 1.0.0 guarantee, preserved verbatim);
 the minimum filters only fragments of partially-covered regions. With the
 superset property restored, the additive-minor bump stands.
+
+## Finding 4 — closed (2026-07-13, scripted investigation)
+
+**Part 1 (operator experiment):** vocal-window detection output is
+byte-comparable to pinned-en (identical lines, spans, coverage) — the
+PR #10 fix validated, Welsh mode closed, the en pin exonerated. The
+Welsh run's earlier "recovery" of the missing verse was its own
+hallucination context warming the decoder.
+
+**Part 2 (scripted, per the investigate-don't-speculate directive):**
+
+- **(a) Decode-param inventory:** in effect = ours (temperature 0, greedy,
+  no context carry, no_speech_threshold 0.6) plus engine defaults
+  (vad_filter OFF, log_prob_threshold −1.0, compression_ratio_threshold
+  2.4). VAD ruled out.
+- **(b) Isolation transcription:** the 41.5–60 s slice of the vocal stem
+  decodes PERFECTLY under our exact params — all 8 verse lines, clean
+  logprobs (−0.34), no_speech_prob 0.511 (below the gate). Per-segment
+  thresholding is NOT the mechanism, and the quiet-verse-suppression
+  hypothesis is refuted in its threshold form. Full-file with the gate
+  disabled recovers only garbage in the span (avg_logprob −1.93) —
+  decode-param changes are insufficient. Mechanism: the full-file pass
+  feeds the verse in badly-conditioned 30 s windows mixed with
+  near-silence; window content, not thresholds, kills the decode.
+- **Remedy (validated on the field track):** clip transcription to padded,
+  merged vocal-activity windows (`clip_timestamps`) — the entire verse
+  returns (10 clean segments in 40–62 s, correct absolute timestamps;
+  58 total segments vs 47), same model, same decode params. Ships as
+  `LyricsConfig.clip_to_vocal_activity` (default ON) +
+  `clip_padding_seconds` (0.5) — features is already a prerequisite, so
+  the decoder is now told where the vocals are. Mass-stale per the
+  config-evolution policy. "Inherent to small" is disproved, so the
+  medium-model data point is unnecessary; OQ-7 stands.
+
+- **(c) Corpus join (4 tracks, 33 untranscribed spans):** spans do NOT
+  skew quiet — 18 quieter vs 15 louder than their track's all-region mean
+  RMS, and the investigation's own verse (41.5–60 s) sits at −32.2 dB,
+  essentially at the track mean (−32.4). Loudness-threshold sensitivity is
+  refuted corpus-wide; window conditioning stands as the mechanism.
+  Post-merge validation snapshot (pre-clip-fix engine): studio tracks
+  covered 0.816/0.856; the live track 0.568 covered with 0.75 flagged —
+  the designed honesty profile, no confident hallucinated text observed in
+  skim. Finding 5 corroborated again (flagged ratios 0.55–0.9 driven by
+  possibly_non_lexical). All four tracks mass-stale after the clip-fix
+  config change; re-runs should raise coverage.

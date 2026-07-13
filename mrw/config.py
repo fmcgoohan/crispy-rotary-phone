@@ -67,6 +67,13 @@ class LyricsConfig(BaseModel, frozen=True):
     # regions skips language detection (meaningless and numerically
     # knife-edge on silence) and records this fallback instead.
     fallback_language: str = "en"
+    # Review 007 finding 4 (closed): full-file transcription feeds quiet
+    # verses in badly-conditioned 30 s windows mixed with near-silence —
+    # an 18 s clean verse decoded to nothing/garbage while the identical
+    # audio decoded perfectly in isolation. Clip transcription to padded,
+    # merged vocal-activity windows instead (features is a prerequisite).
+    clip_to_vocal_activity: bool = True
+    clip_padding_seconds: float = 0.5
 
     # Review 007 field finding 4 investigation knob: whisper's no-speech
     # gate, exposed so decode-setting changes are config (and hash) events.

@@ -249,6 +249,15 @@ def test_uncovered_spans_localize_partial_misses() -> None:
     assert uncovered_spans([(10.0, 39.5)], [(10.0, 40.0)], 1.0) == []
 
 
+def test_clips_from_regions_pad_and_merge() -> None:
+    from mrw.lyrics import clips_from_regions
+
+    # Padding merges near-adjacent regions; head clamped at 0.
+    regions = [(0.2, 4.0), (4.8, 9.0), (20.0, 25.0)]
+    assert clips_from_regions(regions, 0.5) == [(0.0, 9.5), (19.5, 25.5)]
+    assert clips_from_regions([], 0.5) == []
+
+
 def test_vocal_window_slices_assembly() -> None:
     from mrw.lyrics import vocal_window_slices
 
