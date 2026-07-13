@@ -175,7 +175,9 @@ class AudioFeaturesDocument(BaseModel):
 class LyricsEngine(BaseModel):
     name: str
     model: str
-    language_source: Optional[Literal["pinned", "detected_vocal_window"]] = None
+    language_source: Optional[
+        Literal["pinned", "detected_vocal_window", "default_no_vocal_activity"]
+    ] = None
 
 
 class LyricsWord(BaseModel):

@@ -1,22 +1,27 @@
 """Stage 4 — lyrics per PLAN §4 stage 4; contract: schemas/lyrics.schema.json
-v1.0.0 (frozen).
+v1.1.0.
 
 Mode `aligned` when the track was ingested with a lyrics file, else
 `transcribed`. Transcription: faster-whisper (`small`, int8, CPU) on the
-ISOLATED vocal stem (OQ-7), deterministic decode (greedy, temperature 0).
-Alignment: rapidfuzz anchoring of supplied lines to the Whisper word stream
-(OQ-6, mrw/align.py — pure logic, unit-tested without Whisper); `.lrc`
-timestamps are search-window hints only. Supplied markup handled per R-3.
+ISOLATED vocal stem (OQ-7), deterministic decode (greedy, temperature 0);
+language detection runs on a window of the earliest vocal-activity audio,
+never a silent stem head (review 007 finding 1), with provenance in
+engine.language_source. Alignment: rapidfuzz anchoring of supplied lines to
+the Whisper word stream (OQ-6, mrw/align.py — pure logic, unit-tested
+without Whisper); `.lrc` timestamps are search-window hints only. Supplied
+markup handled per R-3.
 
-Honesty machinery: the six schema line flags with thresholds from
-LyricsConfig; `untranscribed_regions` = vocal-activity regions with zero
-word overlap; both coverage ratios. Unreadable passages surface as flagged
-or untranscribed — never silently dropped, never fake-precise.
+Honesty machinery: the seven schema line flags with thresholds from
+LyricsConfig; `untranscribed_regions` = uncovered spans — word-covered
+intervals subtracted from vocal-activity regions, spans ≥
+uncovered_min_seconds emitted (007 finding 3); both coverage ratios.
+Unreadable passages surface as flagged or untranscribed — never silently
+dropped, never fake-precise.
 
 Determinism (D5): the engine decodes greedily at temperature 0 and this
 stage emits documents only, so the precision-contract rounding is the
-jitter policy; the double-run test (stubbed engine) is the evidence.
-Prerequisites are validated before any heavy import (T5).
+jitter policy; double-run tests cover both the stubbed and the real engine
+path. Prerequisites are validated before any heavy import (T5).
 """
 
 from __future__ import annotations
@@ -146,12 +151,21 @@ def _transcribe(
     language = cfg.language
     language_source = "pinned"
     if language is None:
-        # Review 007 field finding 1: never detect on the (possibly silent)
-        # stem head — use the earliest vocal-activity audio.
-        language_source = "detected_vocal_window"
-        window = _detection_window_audio(vocals_path, vocal_regions)
-        _, info = model.transcribe(window, language=None, **decode)
-        language = info.language
+        if not vocal_regions:
+            # H2 degenerate convention (PR #10 review): with zero vocal
+            # activity, detection would run on silence — meaningless, and
+            # numerically knife-edge (near-tied language probabilities can
+            # flip on last-ulp differences between runs). Record the
+            # configured fallback with its own provenance instead.
+            language = cfg.fallback_language
+            language_source = "default_no_vocal_activity"
+        else:
+            # Review 007 field finding 1: never detect on the (possibly
+            # silent) stem head — use the earliest vocal-activity audio.
+            language_source = "detected_vocal_window"
+            window = _detection_window_audio(vocals_path, vocal_regions)
+            _, info = model.transcribe(window, language=None, **decode)
+            language = info.language
 
     segments_iter, info = model.transcribe(
         str(vocals_path), language=language, **decode
@@ -260,7 +274,7 @@ def _line_flags(
         if any(w.end_seconds - w.start_seconds > cfg.long_word_seconds for w in words):
             flags.append("long_word_duration")
     if segment is not None and (
-        segment.no_speech_prob > cfg.no_speech_threshold
+        segment.no_speech_prob > cfg.flag_no_speech_threshold
         or segment.compression_ratio > cfg.compression_ratio_threshold
     ):
         flags.append("possibly_non_lexical")

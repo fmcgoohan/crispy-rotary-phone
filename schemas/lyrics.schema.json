@@ -26,8 +26,8 @@
         "model": { "type": "string", "description": "e.g. 'small'." },
         "language_source": {
           "type": "string",
-          "enum": ["pinned", "detected_vocal_window"],
-          "description": "Provenance of `language`: 'pinned' from config, or 'detected_vocal_window' — detected on a window assembled from the earliest vocal_activity regions (the whole file head when no regions exist), so detection never runs on a silent stem head (review 007 field finding 1; added in 1.1.0)."
+          "enum": ["pinned", "detected_vocal_window", "default_no_vocal_activity"],
+          "description": "Provenance of `language`: 'pinned' from config; 'detected_vocal_window' — detected on a window assembled from the earliest vocal_activity regions, so detection never runs on a silent stem head (review 007 field finding 1); 'default_no_vocal_activity' — the track has NO vocal-activity regions, detection on silence is meaningless and numerically knife-edge, so the configured fallback language is recorded instead (degenerate-case convention, H2; added in 1.1.0)."
         }
       }
     },

@@ -454,6 +454,10 @@ def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
     doc = json.loads((library / track_id / "lyrics.json").read_text())
     _validate(doc, "lyrics.schema.json")
     assert doc["mode"] == "transcribed"
+    # H2 degenerate convention: no vocal activity → no detection on
+    # silence; fallback language with distinct provenance.
+    assert doc["language"] == "en"
+    assert doc["engine"]["language_source"] == "default_no_vocal_activity"
     duration = json.loads(
         (library / track_id / "audio_features.json").read_text()
     )["duration_seconds"]
@@ -464,6 +468,23 @@ def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
             assert 0.0 <= w["start_seconds"] <= w["end_seconds"] <= duration
     assert 0.0 <= doc["coverage"]["vocal_activity_covered_ratio"] <= 1.0
     assert doc["coverage"]["lines_flagged_ratio"] in (0.0, 1.0)  # none or all
+
+    # D5/T2 for the REAL engine path (PR #10 review): re-run lyrics on the
+    # same stems — including the second engine invocation the vocal-window
+    # language detection adds — and require byte identity. The manifest
+    # entry is reset so the no-op check doesn't short-circuit the run.
+    first = (library / track_id / "lyrics.json").read_bytes()
+    manifest_path = library / track_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["documents"]["lyrics"] = {"status": "pending"}
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    result = runner.invoke(
+        app,
+        ["lyrics", track_id, "--library", str(library),
+         "--config", str(tmp_path / "mrw.toml")],
+    )
+    assert result.exit_code == 0, result.output
+    assert (library / track_id / "lyrics.json").read_bytes() == first
 
 
 @pytest.mark.slow
