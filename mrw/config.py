@@ -73,7 +73,8 @@ class LyricsConfig(BaseModel, frozen=True):
     # audio decoded perfectly in isolation. Clip transcription to padded,
     # merged vocal-activity windows instead (features is a prerequisite).
     clip_to_vocal_activity: bool = True
-    clip_padding_seconds: float = 0.5
+    # ge=0: a negative pad would invert a clip window (PR #11 nit).
+    clip_padding_seconds: float = Field(default=0.5, ge=0)
 
     # Review 007 field finding 4 investigation knob: whisper's no-speech
     # gate, exposed so decode-setting changes are config (and hash) events.

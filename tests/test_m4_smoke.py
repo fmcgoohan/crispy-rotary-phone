@@ -546,3 +546,19 @@ def test_espeak_ground_truth_transcription(tmp_path) -> None:
     speech_end = 10.0 + n / SAMPLE_RATE
     for line in doc["lines"]:
         assert 8.0 <= line["start_seconds"] <= speech_end + 2.0
+
+    # D5/T2 for the CLIPPED decode path (PR #11 review): this track HAS
+    # vocal-activity regions, so re-running exercises clip_timestamps —
+    # unlike the degenerate double-run, which bypasses the clip branch.
+    first = (library / track_id / "lyrics.json").read_bytes()
+    manifest_path = library / track_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["documents"]["lyrics"] = {"status": "pending"}
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    result = runner.invoke(
+        app,
+        ["lyrics", track_id, "--library", str(library),
+         "--config", str(tmp_path / "mrw.toml")],
+    )
+    assert result.exit_code == 0, result.output
+    assert (library / track_id / "lyrics.json").read_bytes() == first
