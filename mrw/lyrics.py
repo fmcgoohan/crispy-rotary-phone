@@ -18,6 +18,11 @@ uncovered_min_seconds emitted (007 finding 3); both coverage ratios.
 Unreadable passages surface as flagged or untranscribed — never silently
 dropped, never fake-precise.
 
+Transcription is clipped to padded, merged vocal-activity windows
+(clip_to_vocal_activity, default on — review 007 finding 4): full-file 30 s
+windows that mix near-silence with quiet singing decode to nothing, while
+the same audio decodes cleanly in well-conditioned windows.
+
 Determinism (D5): the engine decodes greedily at temperature 0 and this
 stage emits documents only, so the precision-contract rounding is the
 jitter policy; double-run tests cover both the stubbed and the real engine
@@ -103,6 +108,21 @@ def vocal_window_slices(
     return out
 
 
+def clips_from_regions(
+    regions: list[tuple[float, float]], padding: float
+) -> list[tuple[float, float]]:
+    """Padded, merged vocal-activity windows for clipped transcription
+    (pure; review 007 finding 4)."""
+    clips: list[list[float]] = []
+    for s, e in sorted(regions):
+        s, e = max(0.0, s - padding), e + padding
+        if clips and s <= clips[-1][1]:
+            clips[-1][1] = max(clips[-1][1], e)
+        else:
+            clips.append([s, e])
+    return [(s, e) for s, e in clips]
+
+
 def _detection_window_audio(vocals_path: Path, regions: list[tuple[float, float]]):
     """16 kHz mono window assembled from the earliest vocal-activity
     regions; the file head when no regions exist."""
@@ -167,6 +187,16 @@ def _transcribe(
             _, info = model.transcribe(window, language=None, **decode)
             language = info.language
 
+    if cfg.clip_to_vocal_activity and vocal_regions:
+        # Review 007 finding 4: align decode windows to actual vocal
+        # content. Full-file 30 s windows that mix near-silence with a
+        # quiet verse decode to nothing/garbage; the same audio decodes
+        # cleanly in a well-conditioned window. Timestamps stay
+        # file-relative.
+        clips = clips_from_regions(vocal_regions, cfg.clip_padding_seconds)
+        decode["clip_timestamps"] = ",".join(
+            str(canonical.round_seconds(x)) for pair in clips for x in pair
+        )
     segments_iter, info = model.transcribe(
         str(vocals_path), language=language, **decode
     )

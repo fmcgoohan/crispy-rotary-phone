@@ -249,6 +249,15 @@ def test_uncovered_spans_localize_partial_misses() -> None:
     assert uncovered_spans([(10.0, 39.5)], [(10.0, 40.0)], 1.0) == []
 
 
+def test_clips_from_regions_pad_and_merge() -> None:
+    from mrw.lyrics import clips_from_regions
+
+    # Padding merges near-adjacent regions; head clamped at 0.
+    regions = [(0.2, 4.0), (4.8, 9.0), (20.0, 25.0)]
+    assert clips_from_regions(regions, 0.5) == [(0.0, 9.5), (19.5, 25.5)]
+    assert clips_from_regions([], 0.5) == []
+
+
 def test_vocal_window_slices_assembly() -> None:
     from mrw.lyrics import vocal_window_slices
 
@@ -537,3 +546,19 @@ def test_espeak_ground_truth_transcription(tmp_path) -> None:
     speech_end = 10.0 + n / SAMPLE_RATE
     for line in doc["lines"]:
         assert 8.0 <= line["start_seconds"] <= speech_end + 2.0
+
+    # D5/T2 for the CLIPPED decode path (PR #11 review): this track HAS
+    # vocal-activity regions, so re-running exercises clip_timestamps —
+    # unlike the degenerate double-run, which bypasses the clip branch.
+    first = (library / track_id / "lyrics.json").read_bytes()
+    manifest_path = library / track_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["documents"]["lyrics"] = {"status": "pending"}
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    result = runner.invoke(
+        app,
+        ["lyrics", track_id, "--library", str(library),
+         "--config", str(tmp_path / "mrw.toml")],
+    )
+    assert result.exit_code == 0, result.output
+    assert (library / track_id / "lyrics.json").read_bytes() == first
