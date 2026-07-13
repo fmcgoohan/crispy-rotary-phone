@@ -142,7 +142,10 @@ def align_lines(
                     words=paired,
                 )
             )
-            cursor = start + length
+            # Hint windows may anchor earlier than the cursor (out-of-order
+            # or malformed .lrc); never move the cursor backward, so later
+            # non-hinted lines aren't perturbed (PR #9 review, H2).
+            cursor = max(cursor, start + length)
         else:
             results.append(
                 AnchoredLine(
@@ -157,6 +160,10 @@ def align_lines(
             )
 
     _interpolate_unanchored(results)
+    # Schema invariant: lines[] sorted by start_seconds. Malformed hints can
+    # legitimately anchor lines out of file order — the timeline wins
+    # (stable sort keeps file order for equal starts).
+    results.sort(key=lambda a: a.start)
     return results
 
 

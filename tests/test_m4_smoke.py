@@ -171,6 +171,26 @@ def test_align_unanchored_line_keeps_lrc_hint() -> None:
     assert out[0].start == 42.5
 
 
+def test_out_of_order_lrc_hints_keep_lines_sorted() -> None:
+    # H2 (PR #9 review): a malformed .lrc whose hints run backward must not
+    # drag the cursor backward or emit lines[] unsorted by start_seconds.
+    words = _stream(
+        ("alpha", 1.0, 1.4), ("beta", 1.5, 1.9),
+        ("gamma", 5.0, 5.4), ("delta", 5.5, 5.9),
+        ("omega", 9.0, 9.4), ("last", 9.5, 9.9),
+    )
+    lines = [
+        SuppliedLine("gamma delta", 0, hint_seconds=5.0),
+        SuppliedLine("alpha beta", 1, hint_seconds=1.0),  # hint jumps backward
+        SuppliedLine("omega last", 2),  # no hint: cursor must not have regressed
+    ]
+    out = align_lines(lines, words)
+    assert all(a.anchored for a in out)
+    starts = [a.start for a in out]
+    assert starts == sorted(starts)  # schema invariant
+    assert out[-1].start == 9.0  # unhinted line found after the cursor
+
+
 # --- fast: markup + parsing (R-3) ----------------------------------------------
 
 
