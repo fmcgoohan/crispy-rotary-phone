@@ -40,6 +40,9 @@ class FeaturesConfig(BaseModel, frozen=True):
     vocal_exit_db: float = -45.0
     vocal_min_region_seconds: float = 0.3
     vocal_min_gap_seconds: float = 0.2
+    # Downbeat phase-fit onset-sampling half-window (review 006 F-1): a
+    # tuning knob, so it participates in the features config_hash.
+    phase_fit_window_seconds: float = Field(default=0.03, gt=0)
 
 
 class Config(BaseModel, frozen=True):

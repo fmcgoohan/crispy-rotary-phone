@@ -55,6 +55,11 @@ from .models import (
 )
 from .stems import STEM_NAMES
 
+# Structural constants (review 006 F-1 audit): these are the schema contract
+# itself (hop, window, floor are stated in the schema/PLAN), riding
+# tool_version rather than config; the p98 onset reference is likewise
+# schema-stated (R-1). Output-affecting *tuning* knobs live in FeaturesConfig
+# so they participate in the stage config_hash.
 SAMPLE_RATE = 44100
 HOP = 441  # 10 ms at 44.1 kHz — the 100 Hz uniform grid (PLAN §4.3)
 HOP_SECONDS = 0.01
@@ -154,7 +159,7 @@ def _channel_features(y) -> ChannelFeatures:
     )
 
 
-def _beats_and_tempo(y_mix) -> tuple[Tempo, Beats]:
+def _beats_and_tempo(y_mix, phase_fit_window_seconds: float) -> tuple[Tempo, Beats]:
     import librosa
     import numpy as np
 
@@ -167,6 +172,9 @@ def _beats_and_tempo(y_mix) -> tuple[Tempo, Beats]:
 
     # Confidence heuristic: regularity of inter-beat intervals (coefficient
     # of variation). A metronomic grid scores ~1.0; an erratic one → 0.
+    # The 4.0 multiplier is estimator-structural (rides tool_version, not
+    # config): confidence is advisory, not reinterpretable (review 006 F-1
+    # audit).
     if len(beat_times) >= 3:
         intervals = np.diff(beat_times)
         cv = float(intervals.std() / max(intervals.mean(), 1e-9))
@@ -177,12 +185,14 @@ def _beats_and_tempo(y_mix) -> tuple[Tempo, Beats]:
     # OQ-4: assumed-4/4 phase fit — pick the beat phase whose every-4th
     # beats have the highest mean onset strength; ties take the lowest phase
     # (np.argmax's first-max rule) for determinism. Strength is the local
-    # max in a ±30 ms window around each beat: tracked beats sit a frame or
-    # two off the onset-energy peak, and sampling the envelope exactly at
-    # the beat frame reads pre-onset noise instead of the hit.
+    # max in a ±phase_fit_window_seconds window around each beat (config,
+    # review 006 F-1): tracked beats sit a frame or two off the onset-energy
+    # peak, and sampling the envelope exactly at the beat frame reads
+    # pre-onset noise instead of the hit.
     if len(beat_frames) >= 4:
+        w = max(1, int(round(phase_fit_window_seconds / HOP_SECONDS)))
         at_beats = np.array(
-            [float(env[max(0, f - 3) : f + 4].max()) for f in beat_frames]
+            [float(env[max(0, f - w) : f + w + 1].max()) for f in beat_frames]
         )
         phase_means = [float(at_beats[p::4].mean()) for p in range(4)]
         downbeat_offset = int(np.argmax(phase_means))
@@ -306,7 +316,7 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
         # The mix onset envelope is computed here (beat grid) and again in
         # _channel_features (mix onsets) — deliberate: sharing it would
         # couple the two code paths for a sub-second saving per track.
-        tempo, beats = _beats_and_tempo(mix_mono)
+        tempo, beats = _beats_and_tempo(mix_mono, cfg.features.phase_fit_window_seconds)
         stem_channels: dict[str, ChannelFeatures] = {}
         vocal_rms = None
         for name in STEM_NAMES:

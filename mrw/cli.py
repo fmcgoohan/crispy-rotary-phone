@@ -156,8 +156,26 @@ def models_fetch(config_path: Optional[Path] = _CONFIG_OPT) -> None:
 
 
 @app.command()
-def status(library: Path = _LIBRARY_OPT) -> None:
-    """List tracks and per-document statuses."""
+def status(
+    library: Path = _LIBRARY_OPT,
+    config_path: Optional[Path] = _CONFIG_OPT,
+) -> None:
+    """List tracks and per-document statuses.
+
+    A document recorded `ok` under a different config than the current one
+    is displayed as `stale` — derived here by comparing the stored
+    config_hash against the current stage hash; the manifest itself is
+    never rewritten by this command (review 006, note 2).
+    """
+    cfg = _load_config(config_path)
+
+    def _display(name: str, status: str, stored_hash: Optional[str]) -> str:
+        section = config.STAGE_SECTION.get(name)
+        if status == "ok" and stored_hash and section:
+            if stored_hash != config.stage_hash(getattr(cfg, section)):
+                return "stale"
+        return status
+
     lib = Library(library)
     track_ids = lib.track_ids()
     if not track_ids:
@@ -169,14 +187,24 @@ def status(library: Path = _LIBRARY_OPT) -> None:
             continue
         docs = manifest.documents
         parts = [
-            f"source={docs.source.status}",
-            f"features={docs.audio_features.status}",
+            "source="
+            + _display("source", docs.source.status, docs.source.config_hash),
+            "features="
+            + _display(
+                "audio_features",
+                docs.audio_features.status,
+                docs.audio_features.config_hash,
+            ),
             f"lyrics={docs.lyrics.status}",
             f"video={docs.video.status}",
             f"structure={docs.structure.status}",
         ]
         if manifest.stems is not None:
-            parts.insert(1, f"stems={manifest.stems.status}")
+            parts.insert(
+                1,
+                "stems="
+                + _display("stems", manifest.stems.status, manifest.stems.config_hash),
+            )
         typer.echo(f"{track_id}  {manifest.title}  " + " ".join(parts))
 
 

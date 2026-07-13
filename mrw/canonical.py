@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-# Precision contract: seconds 3 dp, dB 2 dp, Hz 1 dp, ratios/confidences 3 dp.
+# Precision contract: seconds 3 dp, dB 2 dp, Hz 1 dp, BPM 1 dp, ratios/confidences 3 dp.
 def round_seconds(x: float) -> float:
     return round(float(x), 3)
 

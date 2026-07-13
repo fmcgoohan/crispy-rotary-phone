@@ -45,13 +45,16 @@ class StemsResult:
 
 
 def _resolve_device(setting: str) -> str:
-    import torch
-
+    # torch is imported only for 'auto' (review 006 F-2): explicit devices
+    # must not require the neural deps just to report an unrelated error,
+    # and the fast test suite must pass without torch installed (T5).
+    if setting in ("cpu", "mps"):
+        return setting
     if setting == "auto":
+        import torch
+
         return "mps" if torch.backends.mps.is_available() else "cpu"
-    if setting not in ("cpu", "mps"):
-        raise PrerequisiteError(f"stems.device must be auto|cpu|mps, got {setting!r}")
-    return setting
+    raise PrerequisiteError(f"stems.device must be auto|cpu|mps, got {setting!r}")
 
 
 def fetch_model(model_name: str) -> Path:
@@ -171,10 +174,13 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         library.write_manifest(track_id, manifest)
 
     try:
-        device = _resolve_device(cfg.stems.device)
+        # Cheap prerequisite validation first, heavy imports last (F-2/T5):
+        # a missing source file must be reported as exactly that, even on a
+        # machine where torch is absent or broken.
         flac_path = track_dir / "source_audio.flac"
         if not flac_path.is_file():
             raise StemsError(f"missing {flac_path.name} — library is damaged?")
+        device = _resolve_device(cfg.stems.device)
 
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)

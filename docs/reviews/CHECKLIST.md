@@ -56,6 +56,9 @@ Findings reference the item they violate (e.g. "D3").
   video) — never copyrighted media, never binary blobs checked into the repo.
 - **T4** Failure paths are exercised (bad input → correct exit code, intact
   library, `failed` status recorded).
+- **T5** The fast suite (`-m 'not slow'`) must pass in an environment
+  without the neural dependencies installed; heavy imports happen lazily
+  and after cheap prerequisite validation.
 
 ## Two-consumer check (C)
 
