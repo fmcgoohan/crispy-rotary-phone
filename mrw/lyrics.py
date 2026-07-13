@@ -310,16 +310,25 @@ def uncovered_spans(
             merged.append([s, e])
     out: list[tuple[float, float]] = []
     for r_start, r_end in sorted(regions):
+        gaps: list[tuple[float, float]] = []
         pos = r_start
         for s, e in merged:
             if e <= pos or s >= r_end:
                 continue
             if s > pos:
-                out.append((pos, min(s, r_end)))
+                gaps.append((pos, min(s, r_end)))
             pos = max(pos, e)
         if pos < r_end:
-            out.append((pos, r_end))
-    return [(s, e) for s, e in out if e - s >= min_seconds]
+            gaps.append((pos, r_end))
+        # PR #10 review [major S2]: a WHOLE zero-coverage region is always
+        # emitted regardless of length — exactly the 1.0.0 guarantee, which
+        # keeps this a strict superset (additive minor). min_seconds
+        # filters only fragments of partially-covered regions.
+        whole_region_uncovered = len(gaps) == 1 and gaps[0] == (r_start, r_end)
+        for s, e in gaps:
+            if whole_region_uncovered or e - s >= min_seconds:
+                out.append((s, e))
+    return out
 
 
 def _coverage_and_untranscribed(

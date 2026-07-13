@@ -144,3 +144,14 @@ knob landed; 5 is calibration data only.
    new flag; language-window assembly unit-tested; espeak fixture gained a
    10 s silent lead-in asserting English detection with
    `detected_vocal_window` provenance.
+
+### Finding 3 bump-level dispute (PR #10, resolved)
+
+The automated reviewer correctly rejected the PR's original "strict
+superset" claim: v1.0.0 emitted *any* zero-coverage region regardless of
+length, while the first uncovered-span implementation filtered everything
+below `uncovered_min_seconds` — short whole-region misses would have been
+silently dropped. Resolution: whole zero-coverage regions are always
+emitted regardless of length (the 1.0.0 guarantee, preserved verbatim);
+the minimum filters only fragments of partially-covered regions. With the
+superset property restored, the additive-minor bump stands.

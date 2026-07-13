@@ -19,7 +19,7 @@
     },
     "engine": {
       "type": "object",
-      "description": "What produced the timing (and, in transcribed mode, the text). Config-derived, hence deterministic — not run metadata.",
+      "description": "What produced the timing (and, in transcribed mode, the text). Config-derived except `language`, which may be audio-content-derived — see language_source. Not run metadata.",
       "required": ["name", "model"],
       "properties": {
         "name": { "type": "string", "description": "e.g. 'faster-whisper'." },
@@ -108,7 +108,7 @@
     },
     "untranscribed_regions": {
       "type": "array",
-      "description": "Uncovered spans of vocal activity: the word-covered intervals are subtracted from the vocal-activity regions (audio_features.json), and remaining spans at least `uncovered_min_seconds` long (config, default 1.0) are emitted. Sharper than the 1.0.0 region-granularity definition, which hid partial misses inside partially-covered regions (review 007 field finding 3; sharpened in 1.1.0 — same shape). The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
+      "description": "Uncovered spans of vocal activity: the word-covered intervals are subtracted from the vocal-activity regions (audio_features.json). A region with zero word coverage is always emitted whole regardless of length (the 1.0.0 guarantee, preserved — strict superset); fragments of partially-covered regions are emitted when at least `uncovered_min_seconds` long (config, default 1.0). Sharper than the 1.0.0 region-granularity definition, which hid partial misses inside partially-covered regions (review 007 field finding 3; sharpened in 1.1.0 — same shape). The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
       "items": { "$ref": "common.schema.json#/$defs/interval" }
     },
     "coverage": {

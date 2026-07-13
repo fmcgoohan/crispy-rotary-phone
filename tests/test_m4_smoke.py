@@ -235,11 +235,18 @@ def test_uncovered_spans_localize_partial_misses() -> None:
     spans = uncovered_spans(words, regions, min_seconds=1.0)
     assert spans == [(12.0, 35.0), (38.0, 40.0)]
 
-    # Sub-minimum gaps are not emitted; full coverage emits nothing.
+    # Sub-minimum FRAGMENTS of partially-covered regions are not emitted;
+    # full coverage emits nothing.
     assert uncovered_spans([(10.0, 39.5)], regions, 1.0) == []
     assert uncovered_spans([(9.0, 41.0)], regions, 1.0) == []
     # Zero coverage emits the whole region.
     assert uncovered_spans([], regions, 1.0) == [(10.0, 40.0)]
+    # PR #10 [major S2]: a SHORT whole zero-coverage region (v1.0.0 emitted
+    # these) still appears — min_seconds must not silently drop it.
+    assert uncovered_spans([], [(10.0, 10.5)], 1.0) == [(10.0, 10.5)]
+    # ...but an equally short fragment of a partially-covered region is
+    # filtered (the field-noise case min_seconds exists for).
+    assert uncovered_spans([(10.0, 39.5)], [(10.0, 40.0)], 1.0) == []
 
 
 def test_vocal_window_slices_assembly() -> None:
