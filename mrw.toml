@@ -3,3 +3,5 @@ device = "cpu"
 [features]
 vocal_min_gap_seconds = 1.0
 
+[lyrics]
+language = "en"
