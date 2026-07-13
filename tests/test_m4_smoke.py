@@ -119,7 +119,9 @@ def _bursty_vocals(seconds: float = 10.0) -> np.ndarray:
 
 def _stub_engine(monkeypatch, segments: list[Segment], language: str = "en") -> None:
     monkeypatch.setattr(
-        mrw.lyrics, "_transcribe", lambda path, cfg: (language, segments)
+        mrw.lyrics,
+        "_transcribe",
+        lambda path, cfg, regions: (language, "detected_vocal_window", segments),
     )
 
 
@@ -220,6 +222,43 @@ def test_markup_extraction_and_lrc_hints() -> None:
     assert lines[2].hint_seconds is None
 
 
+# --- fast: review 007 field-finding units ---------------------------------------
+
+
+def test_uncovered_spans_localize_partial_misses() -> None:
+    # Field finding 3: an 18 s missed verse inside a partially-covered
+    # merged region must surface as a localized span, not vanish.
+    from mrw.lyrics import uncovered_spans
+
+    regions = [(10.0, 40.0)]
+    words = [(10.0, 12.0), (35.0, 38.0)]  # covered head + tail, 23 s gap
+    spans = uncovered_spans(words, regions, min_seconds=1.0)
+    assert spans == [(12.0, 35.0), (38.0, 40.0)]
+
+    # Sub-minimum FRAGMENTS of partially-covered regions are not emitted;
+    # full coverage emits nothing.
+    assert uncovered_spans([(10.0, 39.5)], regions, 1.0) == []
+    assert uncovered_spans([(9.0, 41.0)], regions, 1.0) == []
+    # Zero coverage emits the whole region.
+    assert uncovered_spans([], regions, 1.0) == [(10.0, 40.0)]
+    # PR #10 [major S2]: a SHORT whole zero-coverage region (v1.0.0 emitted
+    # these) still appears — min_seconds must not silently drop it.
+    assert uncovered_spans([], [(10.0, 10.5)], 1.0) == [(10.0, 10.5)]
+    # ...but an equally short fragment of a partially-covered region is
+    # filtered (the field-noise case min_seconds exists for).
+    assert uncovered_spans([(10.0, 39.5)], [(10.0, 40.0)], 1.0) == []
+
+
+def test_vocal_window_slices_assembly() -> None:
+    from mrw.lyrics import vocal_window_slices
+
+    # Earliest-first, capped at 30 s total, last slice clipped.
+    regions = [(50.0, 70.0), (5.0, 15.0), (20.0, 45.0)]
+    slices = vocal_window_slices(regions, max_seconds=30.0)
+    assert slices == [(5.0, 15.0), (20.0, 40.0)]
+    assert vocal_window_slices([], max_seconds=30.0) == []
+
+
 # --- fast: documents with a stubbed engine -------------------------------------
 
 
@@ -260,7 +299,11 @@ def test_transcribed_document_untranscribed_and_flags(tmp_path, monkeypatch) -> 
 
     assert doc["mode"] == "transcribed"
     assert doc["language"] == "en"
-    assert doc["engine"] == {"name": "faster-whisper", "model": "small"}
+    assert doc["engine"] == {
+        "name": "faster-whisper",
+        "model": "small",
+        "language_source": "detected_vocal_window",
+    }
     # Second vocal-activity region has zero word overlap → untranscribed.
     regions = doc["untranscribed_regions"]
     assert len(regions) == 1
@@ -271,6 +314,10 @@ def test_transcribed_document_untranscribed_and_flags(tmp_path, monkeypatch) -> 
     flags_by_line = [set(l["flags"]) for l in doc["lines"]]
     assert "possibly_non_lexical" in flags_by_line[1]
     assert "low_confidence" in flags_by_line[1]
+    # Review 007 field finding 2: the 9.0-9.8 s segment overlaps no
+    # vocal-activity region (bursts are 2-4 and 6-8 s).
+    assert "outside_vocal_activity" in flags_by_line[1]
+    assert "outside_vocal_activity" not in flags_by_line[0]
     assert doc["coverage"]["lines_flagged_ratio"] == 0.5
 
 
@@ -302,7 +349,13 @@ def test_aligned_document_with_markup(tmp_path, monkeypatch) -> None:
     assert doc["lines"][0]["flags"] == []
     assert doc["lines"][0]["words"][0]["text"] == "hello"
     assert abs(doc["lines"][0]["start_seconds"] - 2.2) < 0.05
-    assert doc["untranscribed_regions"] == []
+    # Field finding 3 in action: the words cover only 2.2-2.75 of the
+    # ~2.0-4.0 vocal region, so the ≥1 s remainder is honestly reported as
+    # uncovered (the old region-granularity definition hid exactly this).
+    regions = doc["untranscribed_regions"]
+    assert len(regions) == 1
+    assert abs(regions[0]["start_seconds"] - 2.75) < 0.1
+    assert abs(regions[0]["end_seconds"] - 4.0) < 0.1
 
 
 def test_lyrics_double_run_byte_identity(tmp_path, monkeypatch) -> None:
@@ -353,7 +406,7 @@ def test_lyrics_engine_failure_records_failed(tmp_path, monkeypatch) -> None:
     library = tmp_path / "lib"
     track_id = _fabricate(library, mix + vocals * 0.5, {"vocals": vocals}, tmp_path)
 
-    def boom(path, cfg):
+    def boom(path, cfg, regions):
         raise RuntimeError("decoder exploded (simulated)")
 
     monkeypatch.setattr(mrw.lyrics, "_transcribe", boom)
@@ -408,6 +461,10 @@ def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
     doc = json.loads((library / track_id / "lyrics.json").read_text())
     _validate(doc, "lyrics.schema.json")
     assert doc["mode"] == "transcribed"
+    # H2 degenerate convention: no vocal activity → no detection on
+    # silence; fallback language with distinct provenance.
+    assert doc["language"] == "en"
+    assert doc["engine"]["language_source"] == "default_no_vocal_activity"
     duration = json.loads(
         (library / track_id / "audio_features.json").read_text()
     )["duration_seconds"]
@@ -418,6 +475,23 @@ def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
             assert 0.0 <= w["start_seconds"] <= w["end_seconds"] <= duration
     assert 0.0 <= doc["coverage"]["vocal_activity_covered_ratio"] <= 1.0
     assert doc["coverage"]["lines_flagged_ratio"] in (0.0, 1.0)  # none or all
+
+    # D5/T2 for the REAL engine path (PR #10 review): re-run lyrics on the
+    # same stems — including the second engine invocation the vocal-window
+    # language detection adds — and require byte identity. The manifest
+    # entry is reset so the no-op check doesn't short-circuit the run.
+    first = (library / track_id / "lyrics.json").read_bytes()
+    manifest_path = library / track_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["documents"]["lyrics"] = {"status": "pending"}
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    result = runner.invoke(
+        app,
+        ["lyrics", track_id, "--library", str(library),
+         "--config", str(tmp_path / "mrw.toml")],
+    )
+    assert result.exit_code == 0, result.output
+    assert (library / track_id / "lyrics.json").read_bytes() == first
 
 
 @pytest.mark.slow
@@ -439,8 +513,10 @@ def test_espeak_ground_truth_transcription(tmp_path) -> None:
     speech, _ = sf.read(speech44, dtype="float32", always_2d=True)
     speech_mono = speech.mean(axis=1)
 
-    bed = _click_track(12.0) * 0.25
-    start = 3 * SAMPLE_RATE
+    # Long instrumental lead-in (field finding 1): speech starts at 10 s of
+    # a 20 s bed, so naive head-of-file detection would see near-silence.
+    bed = _click_track(20.0) * 0.25
+    start = 10 * SAMPLE_RATE
     n = min(len(speech_mono), len(bed) - start)
     mix = bed.copy()
     mix[start : start + n] += 0.6 * speech_mono[:n]
@@ -454,6 +530,10 @@ def test_espeak_ground_truth_transcription(tmp_path) -> None:
     text = " ".join(l["text"].lower() for l in doc["lines"])
     hits = sum(w in text for w in ("quick", "brown", "fox", "lazy", "dog"))
     assert hits >= 3, f"expected ground-truth words, got: {text!r}"
-    speech_end = 3.0 + n / SAMPLE_RATE
+    # Field finding 1: despite the silent lead-in, detection ran on the
+    # vocal window and found English, with provenance recorded.
+    assert doc["language"] == "en"
+    assert doc["engine"]["language_source"] == "detected_vocal_window"
+    speech_end = 10.0 + n / SAMPLE_RATE
     for line in doc["lines"]:
-        assert 1.0 <= line["start_seconds"] <= speech_end + 2.0
+        assert 8.0 <= line["start_seconds"] <= speech_end + 2.0

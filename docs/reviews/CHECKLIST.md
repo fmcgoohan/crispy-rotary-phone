@@ -74,3 +74,6 @@ Findings reference the item they violate (e.g. "D3").
   the finding ID in the relevant `docs/reviews/NNN-*.md`.
 - **P2** Decisions that change a recommendation get a resolution note in
   `OPEN_QUESTIONS.md`.
+- **P3** A main-bound infrastructure commit contains only its stated files:
+  commit the feature branch before any checkout of main, and verify
+  `git status` before `add` (the 2db7fc8 lesson — review 007 F-2).

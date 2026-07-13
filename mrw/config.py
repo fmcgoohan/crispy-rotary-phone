@@ -54,10 +54,23 @@ class LyricsConfig(BaseModel, frozen=True):
     # output-affecting tunables are config so they join the config_hash).
     confidence_threshold: float = 0.5  # low_confidence: mean word conf below
     long_word_seconds: float = 2.5  # long_word_duration (melisma)
-    no_speech_threshold: float = 0.5  # possibly_non_lexical (transcribed)
+    # Renamed from no_speech_threshold (PR #10 nit): flag_* thresholds
+    # feed line flags; decode_* settings feed the engine.
+    flag_no_speech_threshold: float = 0.5  # possibly_non_lexical (transcribed)
     compression_ratio_threshold: float = 2.4  # possibly_non_lexical
     overlap_rms_db: float = -15.0  # overlapping_vocals: sustained loud stem
     min_anchor_score: float = 0.6  # aligned mode: fuzzy-anchor acceptance
+    # Review 007 field finding 3: minimum uncovered-span length emitted as
+    # an untranscribed region.
+    uncovered_min_seconds: float = 1.0
+    # Degenerate-case convention (H2): a track with zero vocal-activity
+    # regions skips language detection (meaningless and numerically
+    # knife-edge on silence) and records this fallback instead.
+    fallback_language: str = "en"
+
+    # Review 007 field finding 4 investigation knob: whisper's no-speech
+    # gate, exposed so decode-setting changes are config (and hash) events.
+    decode_no_speech_threshold: float = 0.6
 
 
 class Config(BaseModel, frozen=True):

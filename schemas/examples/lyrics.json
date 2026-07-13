@@ -1,12 +1,13 @@
 {
   "_note": "Worked example, truncated: the real document carries all 42 lines. Lyrics are invented for this hypothetical track. Keys prefixed with _ are documentation-only.",
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "track_id": "3f9a1c7e2b8d4056",
   "mode": "aligned",
   "language": "en",
   "engine": {
     "name": "faster-whisper",
-    "model": "small"
+    "model": "small",
+    "language_source": "detected_vocal_window"
   },
   "lines": [
     {

@@ -15,7 +15,9 @@ from pydantic import BaseModel
 # constant across documents — schemas evolve independently).
 SOURCE_SCHEMA_VERSION = "1.0.0"
 AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
-LYRICS_SCHEMA_VERSION = "1.0.0"
+# lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
+# flag, untranscribed_regions sharpened to uncovered spans (review 007).
+LYRICS_SCHEMA_VERSION = "1.1.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -173,6 +175,9 @@ class AudioFeaturesDocument(BaseModel):
 class LyricsEngine(BaseModel):
     name: str
     model: str
+    language_source: Optional[
+        Literal["pinned", "detected_vocal_window", "default_no_vocal_activity"]
+    ] = None
 
 
 class LyricsWord(BaseModel):
