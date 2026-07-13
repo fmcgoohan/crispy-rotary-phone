@@ -325,6 +325,30 @@ def test_lyrics_prerequisites(tmp_path) -> None:
                 _sys.modules[k] = v
 
 
+def test_lyrics_engine_failure_records_failed(tmp_path, monkeypatch) -> None:
+    # T4 (PR #9 review): mid-stage failure → exit 1, status=failed + error
+    # in the manifest, library intact — the M2 stems precedent for lyrics.
+    mix = _click_track(8.0)
+    vocals = _bursty_vocals(8.0)
+    library = tmp_path / "lib"
+    track_id = _fabricate(library, mix + vocals * 0.5, {"vocals": vocals}, tmp_path)
+
+    def boom(path, cfg):
+        raise RuntimeError("decoder exploded (simulated)")
+
+    monkeypatch.setattr(mrw.lyrics, "_transcribe", boom)
+    result = runner.invoke(app, ["lyrics", track_id, "--library", str(library)])
+    assert result.exit_code == 1
+    manifest = json.loads((library / track_id / "manifest.json").read_text())
+    entry = manifest["documents"]["lyrics"]
+    assert entry["status"] == "failed"
+    assert "decoder exploded" in entry["error"]
+    assert not (library / track_id / "lyrics.json").exists()
+    # Prior documents untouched.
+    assert manifest["documents"]["audio_features"]["status"] == "ok"
+    assert (library / track_id / "audio_features.json").is_file()
+
+
 # --- slow: real Whisper ---------------------------------------------------------
 
 
@@ -350,19 +374,30 @@ def _run_chain(wav: Path, tmp_path: Path) -> tuple[Path, str]:
 
 @pytest.mark.slow
 def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
+    """No vocals → the assertion is HONESTY, not a hallucination count.
+
+    Whisper's hallucination count on near-silence varies by environment
+    (different CPU arch → slightly different separation output → different
+    decode; observed 2 locally vs 3 on CI, PR #9 review blocker). The
+    stable properties are: whatever appears is flagged, every timestamp
+    stays inside the timeline domain, and the document validates.
+    """
     wav = tmp_path / "clicks.wav"
     _write_stereo_wav(wav, _click_track(15.0))
     library, track_id = _run_chain(wav, tmp_path)
     doc = json.loads((library / track_id / "lyrics.json").read_text())
     _validate(doc, "lyrics.schema.json")
     assert doc["mode"] == "transcribed"
-    # No vocals: honest degenerate output — nothing confidently asserted.
-    assert len(doc["lines"]) <= 2
+    duration = json.loads(
+        (library / track_id / "audio_features.json").read_text()
+    )["duration_seconds"]
     for line in doc["lines"]:
-        assert line["flags"], "any line hallucinated from silence must be flagged"
-    assert doc["coverage"]["vocal_activity_covered_ratio"] in (1.0, 0.0) or (
-        0.0 <= doc["coverage"]["vocal_activity_covered_ratio"] <= 1.0
-    )
+        assert line["flags"], "a line hallucinated from silence must be flagged"
+        assert 0.0 <= line["start_seconds"] <= line["end_seconds"] <= duration
+        for w in line["words"]:
+            assert 0.0 <= w["start_seconds"] <= w["end_seconds"] <= duration
+    assert 0.0 <= doc["coverage"]["vocal_activity_covered_ratio"] <= 1.0
+    assert doc["coverage"]["lines_flagged_ratio"] in (0.0, 1.0)  # none or all
 
 
 @pytest.mark.slow

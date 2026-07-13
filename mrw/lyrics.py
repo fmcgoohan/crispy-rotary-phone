@@ -50,7 +50,6 @@ _LABELS = ("intro", "verse", "chorus", "bridge", "outro")
 # Structural (rides tool_version): fraction of a line's span that must sit
 # above overlap_rms_db for the overlapping_vocals flag.
 _OVERLAP_FRACTION = 0.8
-_HOP_SECONDS = 0.01
 
 
 class LyricsError(RuntimeError):
@@ -84,7 +83,12 @@ def _transcribe(
     """Run faster-whisper on the vocal stem. Isolated so tests stub it."""
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(cfg.model, device="cpu", compute_type="int8")
+    # D5 (PR #9 review): pin threads like the stems precedent — documents
+    # get the rounding layer, but near-threshold decodes on quiet audio can
+    # flip with thread order; one thread keeps same-machine runs stable.
+    model = WhisperModel(
+        cfg.model, device="cpu", compute_type="int8", cpu_threads=1, num_workers=1
+    )
     segments_iter, info = model.transcribe(
         str(vocals_path),
         word_timestamps=True,
@@ -165,10 +169,14 @@ def parse_supplied_lyrics(
 
 
 def _vocals_rms_lookup(features_doc: dict):
-    values = features_doc["stems"]["vocals"]["rms_db"]["values"]
+    series = features_doc["stems"]["vocals"]["rms_db"]
+    values = series["values"]
+    # S4 (PR #9 review): the hop comes from the document's own embedded
+    # hop_seconds — never a parallel constant that could drift from it.
+    hop = series["hop_seconds"]
 
     def mean_above_fraction(start: float, end: float, threshold_db: float) -> float:
-        i0, i1 = int(start / _HOP_SECONDS), max(int(end / _HOP_SECONDS), 0)
+        i0, i1 = int(start / hop), max(int(end / hop), 0)
         span = values[max(i0, 0) : min(i1 + 1, len(values))]
         if not span:
             return 0.0
@@ -323,6 +331,17 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
         language, segments = _transcribe(vocals_path, cfg.lyrics)
         if cfg.lyrics.language:
             language = cfg.lyrics.language
+        # Whisper can hallucinate timestamps past the end of quiet audio
+        # (observed on CI: end 21.98 on a 15 s clip). Times outside the
+        # unified timeline domain are clamped to [0, duration]; content
+        # honesty is the flags' job, timeline validity is ours (PR #9).
+        duration = float(features_doc["duration_seconds"])
+        for seg in segments:
+            seg.start = min(max(seg.start, 0.0), duration)
+            seg.end = min(max(seg.end, seg.start), duration)
+            for w in seg.words:
+                w.start = min(max(w.start, 0.0), duration)
+                w.end = min(max(w.end, w.start), duration)
         overlap_fn = _vocals_rms_lookup(features_doc)
         all_words = [w for seg in segments for w in seg.words]
 

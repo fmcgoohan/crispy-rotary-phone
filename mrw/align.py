@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import canonical
+
 _PUNCT = re.compile(r"[^\w']+", re.UNICODE)
 
 # Search bounds (structural, ride tool_version): how far past the cursor an
@@ -82,7 +84,7 @@ def _pair_words(
         j = 0 if n_sup == 1 else round(i * (n_obs - 1) / (n_sup - 1))
         obs = window[j]
         conf = fuzz.ratio(normalize(word), normalize(obs.text)) / 100.0
-        out.append((word, obs.start, obs.end, round(conf, 3)))
+        out.append((word, obs.start, obs.end, canonical.round_ratio(conf)))
     return out
 
 
@@ -126,7 +128,9 @@ def align_lines(
             _, start, length = best
             window = words[start : start + length]
             paired = _pair_words(supplied_words, window)
-            confidence = round(sum(p[3] for p in paired) / len(paired), 3)
+            confidence = canonical.round_ratio(
+                sum(p[3] for p in paired) / len(paired)
+            )
             results.append(
                 AnchoredLine(
                     text=line.text,
