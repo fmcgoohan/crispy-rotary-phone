@@ -357,6 +357,60 @@ def test_budget_gate_proceeds_via_cache_replay(
     assert names == doc_names
 
 
+@pytest.mark.slow
+def test_partial_spend_recorded_on_mid_run_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # PR #12 round 3 [minor]: paid caption calls made before a mid-run
+    # failure must appear in the failed entry's api_usage — spend never
+    # vanishes from the ledger.
+    import mrw.captions
+    import mrw.video
+
+    class ExplodingBackend:
+        name = "anthropic"
+
+        def __init__(self):
+            self.calls = 0
+            self.input_tokens = 0
+            self.output_tokens = 0
+
+        def caption(self, frame_jpegs, frame_sha256s):
+            if self.calls >= 1:
+                raise RuntimeError("API exploded mid-run (simulated)")
+            self.calls += 1
+            self.input_tokens += 1200
+            self.output_tokens += 80
+            return ShotCaption(text="paid caption", tags=["paid"])
+
+    def fake_make_backend(vcfg, cache_dir):
+        return ExplodingBackend(), CaptionCache(cache_dir)
+
+    monkeypatch.setattr(mrw.captions, "make_backend", fake_make_backend)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-never-used")
+
+    mp4 = tmp_path / "cuts.mp4"
+    _cut_fixture(mp4)
+    library = tmp_path / "lib"
+    result = runner.invoke(app, ["ingest", str(mp4), "--library", str(library)])
+    assert result.exit_code == 0, result.output
+    track_id = next(p.name for p in library.iterdir() if p.is_dir())
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[video]\ncaption_backend = "anthropic"\n')
+    result = runner.invoke(
+        app, ["video", track_id, "--library", str(library), "--config", str(cfg)]
+    )
+    assert result.exit_code == 1
+
+    manifest = json.loads((library / track_id / "manifest.json").read_text())
+    entry = manifest["documents"]["video"]
+    assert entry["status"] == "failed"
+    usage = entry["run"]["api_usage"]
+    assert usage["calls"] == 1  # the paid call before the explosion
+    assert usage["usd"] > 0
+    assert not (library / track_id / ".frames.tmp").exists()  # tmp cleaned
+
+
 def test_moved_original_is_prerequisite_error(tmp_path: Path) -> None:
     mp4 = tmp_path / "cuts.mp4"
     _cut_fixture(mp4)

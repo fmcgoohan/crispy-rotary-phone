@@ -338,11 +338,30 @@ def run_video(
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
+    backend = None  # visible to the failure path for partial-spend recording
 
     def _record(entry: DocumentEntry) -> None:
         manifest.documents.video = entry
         library.write_manifest(track_id, manifest)
 
+    def _accrued_usage(estimated: costs.CostEstimate | None):
+        """Real spend so far — recorded even on failure (PR #12 round 3):
+        paid caption calls must never vanish from the cost ledger."""
+        if backend is None or getattr(backend, "calls", 0) == 0:
+            return None
+        in_price, out_price = costs.PRICES_PER_MTOK[vcfg.caption_model]
+        usd = (
+            backend.input_tokens * in_price + backend.output_tokens * out_price
+        ) / 1_000_000
+        return ApiUsage(
+            calls=backend.calls,
+            input_tokens=backend.input_tokens,
+            output_tokens=backend.output_tokens,
+            usd=round(usd, 4),
+            estimated_usd=estimated.usd if estimated else None,
+        )
+
+    estimate = None
     try:
         from .captions import (
             PROMPT_TOKENS_ESTIMATE,
@@ -373,7 +392,6 @@ def run_video(
         cache = CaptionCache(track_dir / ".cache" / "captions")
 
         # Pre-flight cost estimate over UNCACHED shots only (M5 addendum).
-        estimate = None
         if vcfg.caption_backend != "null":
             from PIL import Image
             import io
@@ -500,15 +518,8 @@ def run_video(
 
         usage = None
         if vcfg.caption_backend != "null":
-            in_price, out_price = costs.PRICES_PER_MTOK[vcfg.caption_model]
-            actual_usd = (
-                backend.input_tokens * in_price + backend.output_tokens * out_price
-            ) / 1_000_000
-            usage = ApiUsage(
-                calls=backend.calls,
-                input_tokens=backend.input_tokens,
-                output_tokens=backend.output_tokens,
-                usd=round(actual_usd, 4),
+            usage = _accrued_usage(estimate) or ApiUsage(
+                calls=0, input_tokens=0, output_tokens=0, usd=0.0,
                 estimated_usd=estimate.usd if estimate else None,
             )
         _record(
@@ -535,8 +546,22 @@ def run_video(
         import shutil as _shutil
 
         _shutil.rmtree(track_dir / ".frames.tmp", ignore_errors=True)
+        partial = _accrued_usage(estimate)
         _record(
-            DocumentEntry(status="failed", config_hash=video_hash,
-                          error=str(exc)[:500])
+            DocumentEntry(
+                status="failed",
+                config_hash=video_hash,
+                run=(
+                    RunMetadata(
+                        started_at=started_at,
+                        duration_seconds=round(time.monotonic() - t0, 2),
+                        tool_version=TOOL_VERSION,
+                        api_usage=partial,
+                    )
+                    if partial
+                    else None
+                ),
+                error=str(exc)[:500],
+            )
         )
         raise VideoError(str(exc)[:500]) from exc
