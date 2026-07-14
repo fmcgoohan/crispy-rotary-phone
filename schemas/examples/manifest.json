@@ -52,7 +52,14 @@
       "run": {
         "started_at": "2026-07-11T17:46:25Z",
         "duration_seconds": 96.7,
-        "tool_version": "mrw 0.1.0"
+        "tool_version": "mrw 0.1.0",
+        "api_usage": {
+          "calls": 78,
+          "input_tokens": 51480,
+          "output_tokens": 14742,
+          "usd": 0.1252,
+          "estimated_usd": 0.1687
+        }
       }
     },
     "structure": {

@@ -86,7 +86,7 @@
           },
           "motion": {
             "type": "object",
-            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip.",
+            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip. Degenerate case: a shot too short to contain any 12 fps sample pair (< ~1/6 s) carries no motion evidence and reports 0.0/0.0, indistinguishable from static by design.",
             "required": ["mean", "p95"],
             "properties": {
               "mean": { "type": "number", "minimum": 0 },

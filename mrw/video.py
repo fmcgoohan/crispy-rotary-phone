@@ -162,6 +162,10 @@ def shot_motion(pair_values: list[float], pair_times: list[float],
 
     inside = [v for v, t in zip(pair_values, pair_times) if start <= t < end]
     if not inside:
+        # H2 degenerate convention (PR #12 review): a shot too short to
+        # contain any 12 fps motion-sample pair (< ~1/6 s) carries no
+        # motion evidence and reports 0.0/0.0 — deliberately identical to
+        # a static shot, and stated in the schema's motion description.
         return Motion(mean=0.0, p95=0.0)
     arr = np.array(inside)
     return Motion(

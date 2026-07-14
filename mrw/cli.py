@@ -200,8 +200,8 @@ def video(
     if result.estimated_only:
         if result.estimate is not None:
             typer.echo(
-                f"estimate for {result.track_id} ({result.n_shots} shots, "
-                f"uncached only): {result.estimate.describe()}"
+                f"estimate for {result.track_id}: {result.n_shots} shots total; "
+                f"uncached captions would cost {result.estimate.describe()}"
             )
         else:
             typer.echo(
