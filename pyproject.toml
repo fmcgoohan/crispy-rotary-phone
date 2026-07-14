@@ -15,6 +15,11 @@ dependencies = [
     "pyloudnorm>=0.2.0",
     "faster-whisper>=1.2.1",
     "rapidfuzz>=3.14.5",
+    "scenedetect>=0.7",
+    "opencv-python-headless>=5.0.0.93",
+    "scikit-learn>=1.9.0",
+    "anthropic>=0.116.0",
+    "pillow>=12.3.0",
 ]
 
 [dependency-groups]
@@ -40,6 +45,12 @@ markers = [
 ]
 
 # CPU-only torch wheels on Linux CI (default PyPI linux wheels bundle CUDA, ~2.5 GB)
+[tool.uv]
+# scenedetect's base deps pull the GUI opencv-python alongside our explicit
+# opencv-python-headless (PR #12 round-6 nit) — exclude the GUI variant;
+# cv2 resolves to headless everywhere.
+override-dependencies = ["opencv-python; python_full_version < '0'"]
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 torchaudio = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]

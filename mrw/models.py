@@ -18,10 +18,12 @@ AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
 LYRICS_SCHEMA_VERSION = "1.1.0"
+VIDEO_SCHEMA_VERSION = "1.0.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
-MANIFEST_SCHEMA_VERSION = "1.2.0"
+# 1.3.0: additive — optional `api_usage` on run metadata (M5 cost ledger).
+MANIFEST_SCHEMA_VERSION = "1.3.0"
 
 Status = Literal["ok", "pending", "failed", "stale", "not_applicable"]
 
@@ -169,6 +171,68 @@ class AudioFeaturesDocument(BaseModel):
     vocal_activity: VocalActivity
 
 
+# --- video.json ---------------------------------------------------------------
+
+
+class Interval(BaseModel):
+    start_seconds: float
+    end_seconds: float
+
+
+class Detector(BaseModel):
+    name: str
+    threshold: float
+    min_shot_seconds: float
+
+
+class CaptionBackendInfo(BaseModel):
+    name: str
+    model: Optional[str] = None
+    prompt_version: Optional[str] = None
+
+
+class RepresentativeFrame(BaseModel):
+    time_seconds: float
+    path: str
+    sha256: str
+
+
+class PaletteSwatch(BaseModel):
+    hex: str
+    proportion: float
+
+
+class Motion(BaseModel):
+    mean: float
+    p95: float
+
+
+class ShotCaption(BaseModel):
+    text: str
+    tags: list[str]
+
+
+class Shot(BaseModel):
+    index: int
+    start_seconds: float
+    end_seconds: float
+    start_frame: int
+    end_frame: int
+    representative_frames: list[RepresentativeFrame]
+    palette: list[PaletteSwatch]
+    motion: Motion
+    caption: Optional[ShotCaption] = None
+
+
+class VideoDocument(BaseModel):
+    schema_version: str = VIDEO_SCHEMA_VERSION
+    track_id: str
+    video_span: Interval
+    detector: Detector
+    caption_backend: CaptionBackendInfo
+    shots: list[Shot]
+
+
 # --- lyrics.json ------------------------------------------------------------
 
 
@@ -230,11 +294,20 @@ class LyricsDocument(BaseModel):
 # --- manifest.json ----------------------------------------------------------
 
 
+class ApiUsage(BaseModel):
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    usd: float
+    estimated_usd: Optional[float] = None
+
+
 class RunMetadata(BaseModel):
     started_at: str
     duration_seconds: float
     tool_version: str
     device: Optional[Literal["cpu", "mps"]] = None
+    api_usage: Optional[ApiUsage] = None
 
 
 class DocumentEntry(BaseModel):
