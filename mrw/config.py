@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -86,7 +87,9 @@ class VideoConfig(BaseModel, frozen=True):
     detector_threshold: float = 27.0
     min_shot_seconds: float = Field(default=0.4, gt=0)
     # Captions (OQ-10): "null" = offline no-op default, caption absent.
-    caption_backend: str = "null"  # null | anthropic
+    # Validated at the config boundary (PR #12 round 4 nit) — a typo'd
+    # backend fails at load, not deep inside the stage after decode work.
+    caption_backend: Literal["null", "anthropic"] = "null"
     caption_model: str = "claude-haiku-4-5"  # pinned; priced in mrw/costs.py
     caption_prompt_version: str = "v1"
     caption_max_output_tokens: int = Field(default=300, ge=1)

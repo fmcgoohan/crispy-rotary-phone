@@ -374,6 +374,14 @@ def run_video(
         bounds = _detect_shots(video_path, vcfg, fps, frame_count)
         shots_raw = normalize_shots(bounds, fps)
 
+        # PR #12 round 4 [minor]: a $0 null-backend estimate needs only the
+        # shot count — return before any frame extraction/JPEG work.
+        if estimate_only and vcfg.caption_backend == "null":
+            return VideoResult(
+                track_id, len(shots_raw), "null", None, None, False,
+                estimated_only=True,
+            )
+
         # Representative frame plan (indices, exact).
         plan: list[list[int]] = []
         for s_frame, e_frame, s_t, e_t in shots_raw:
@@ -428,11 +436,6 @@ def run_video(
                     "video.caption_budget_usd_per_run in mrw.toml to "
                     "proceed, or run with --estimate to inspect"
                 )
-        elif estimate_only:
-            return VideoResult(
-                track_id, len(shots_raw), "null", None, None, False,
-                estimated_only=True,
-            )
 
         backend, cache = make_backend(vcfg, track_dir / ".cache" / "captions")
         motion_values, motion_times = _motion_pass(video_path)
