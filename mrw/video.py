@@ -490,12 +490,6 @@ def run_video(
                 )
             )
 
-        import shutil as _shutil
-
-        if frames_dir.exists():
-            _shutil.rmtree(frames_dir)
-        frames_tmp.rename(frames_dir)
-
         document = VideoDocument(
             track_id=track_id,
             video_span=Interval(
@@ -517,6 +511,21 @@ def run_video(
             ),
             shots=shots,
         )
+        # PR #12 round 5 [major]: the document is built, validated and
+        # serialized BEFORE the frames swap, so any modelling/serialization
+        # failure leaves the previous frames/ AND video.json fully intact.
+        # The swap and the (atomic temp-and-rename) document write are then
+        # adjacent renames — the only remaining inconsistency window is a
+        # hard crash between the two, which the next run heals by
+        # rewriting both (the entry records failed/stale either way).
+        from .models import doc_dump as _doc_dump
+
+        canonical.dumps(_doc_dump(document))  # validate + serialize first
+        import shutil as _shutil
+
+        if frames_dir.exists():
+            _shutil.rmtree(frames_dir)
+        frames_tmp.rename(frames_dir)
         content_sha = library.write_document(track_id, "video.json", document)
 
         usage = None
