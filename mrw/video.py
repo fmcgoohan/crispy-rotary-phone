@@ -415,8 +415,18 @@ def run_video(
         backend, cache = make_backend(vcfg, track_dir / ".cache" / "captions")
         motion_values, motion_times = _motion_pass(video_path)
 
+        # PR #12 review [major]: frames are written to a temp dir and
+        # swapped in whole on success (the stems temp-dir-and-rename
+        # pattern) — a failed run leaves the previous frames/ intact, and
+        # a re-run can never leave stale JPEGs from a prior config beside
+        # the new video.json.
         frames_dir = track_dir / "frames"
-        frames_dir.mkdir(exist_ok=True)
+        frames_tmp = track_dir / ".frames.tmp"
+        if frames_tmp.exists():
+            import shutil as _shutil
+
+            _shutil.rmtree(frames_tmp)
+        frames_tmp.mkdir()
         shots: list[Shot] = []
         for idx, ((s_frame, e_frame, s_t, e_t), shot_indices) in enumerate(
             zip(shots_raw, plan)
@@ -424,7 +434,7 @@ def run_video(
             reps = []
             for n, frame_idx in enumerate(shot_indices, start=1):
                 name = f"shot_{idx + 1:04d}_f{n}.jpg"
-                (frames_dir / name).write_bytes(jpegs[frame_idx])
+                (frames_tmp / name).write_bytes(jpegs[frame_idx])
                 reps.append(
                     RepresentativeFrame(
                         time_seconds=canonical.round_seconds(frame_idx / fps),
@@ -454,6 +464,12 @@ def run_video(
                     caption=caption,
                 )
             )
+
+        import shutil as _shutil
+
+        if frames_dir.exists():
+            _shutil.rmtree(frames_dir)
+        frames_tmp.rename(frames_dir)
 
         document = VideoDocument(
             track_id=track_id,
@@ -512,6 +528,9 @@ def run_video(
     except PrerequisiteError:
         raise
     except Exception as exc:
+        import shutil as _shutil
+
+        _shutil.rmtree(track_dir / ".frames.tmp", ignore_errors=True)
         _record(
             DocumentEntry(status="failed", config_hash=video_hash,
                           error=str(exc)[:500])

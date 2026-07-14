@@ -4,8 +4,10 @@ Fast (pure logic, synthetic images, zero API calls anywhere): palette on
 constructed frames with known clusters; motion on a moving square vs a
 static frame; shot-partition invariants; caption cache hit/miss on
 prompt_version/model changes with a stub; null-vs-absent caption in the
-document path; estimator math, cache-aware estimation, budget gate,
-unknown-model refusal, ledger aggregation.
+document path; estimator math, cache-aware estimation, unknown-model
+refusal, ledger aggregation. The budget-gate abort AND proceed paths are
+slow tests (they need the real stage on the cut fixture); the proceed case
+doubles as the end-to-end OQ-10 cache-replay proof (zero API calls).
 
 Slow: generated fixture MP4 with hard cuts at known times → boundaries
 within ±0.15 s; a >4 s shot produces two frames; full-stage double-run
@@ -284,6 +286,75 @@ def test_video_double_run_byte_identity(tmp_path: Path) -> None:
     assert outputs[0][1].keys() == outputs[1][1].keys()
     for name in outputs[0][1]:
         assert outputs[0][1][name] == outputs[1][1][name], f"{name} differs"
+
+
+@pytest.mark.slow
+def test_budget_gate_aborts_before_any_spend(tmp_path: Path) -> None:
+    # PR #12 review [major]: the gate itself, not just the estimator math.
+    # Gate precedes backend construction, so no API key is needed even on
+    # the anthropic path.
+    mp4 = tmp_path / "cuts.mp4"
+    _cut_fixture(mp4)
+    library = tmp_path / "lib"
+    result = runner.invoke(app, ["ingest", str(mp4), "--library", str(library)])
+    assert result.exit_code == 0, result.output
+    track_id = next(p.name for p in library.iterdir() if p.is_dir())
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text(
+        '[video]\ncaption_backend = "anthropic"\n'
+        "caption_budget_usd_per_run = 0.000001\n"
+    )
+    result = runner.invoke(
+        app, ["video", track_id, "--library", str(library), "--config", str(cfg)]
+    )
+    assert result.exit_code == 2
+    assert "exceeds" in result.output
+    assert "caption_budget_usd_per_run" in result.output  # override instruction
+    track_dir = library / track_id
+    assert not (track_dir / "video.json").exists()  # nothing written
+    assert not (track_dir / "frames").exists()
+    manifest = json.loads((track_dir / "manifest.json").read_text())
+    assert manifest["documents"]["video"]["status"] == "pending"  # untouched
+
+
+@pytest.mark.slow
+def test_budget_gate_proceeds_via_cache_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Within budget → proceed; with every shot cached, this is the OQ-10
+    replay proof: zero API calls, captions in the document, $0 actual."""
+    library, track_id = _run_video_stage(tmp_path)  # null-backend first run
+    doc = json.loads((library / track_id / "video.json").read_text())
+
+    cache = CaptionCache(library / track_id / ".cache" / "captions")
+    for shot in doc["shots"]:
+        shas = [r["sha256"] for r in shot["representative_frames"]]
+        cache.put(
+            cache_key(shas, "v1", "claude-haiku-4-5"),
+            ShotCaption(text=f"cached caption {shot['index']}", tags=["cached"]),
+        )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-never-used")
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[video]\ncaption_backend = "anthropic"\n')
+    result = runner.invoke(
+        app, ["video", track_id, "--library", str(library), "--config", str(cfg)]
+    )
+    assert result.exit_code == 0, result.output
+
+    doc2 = json.loads((library / track_id / "video.json").read_text())
+    _validate(doc2)
+    assert doc2["caption_backend"]["name"] == "anthropic"
+    assert all(s["caption"]["tags"] == ["cached"] for s in doc2["shots"])
+    manifest = json.loads((library / track_id / "manifest.json").read_text())
+    usage = manifest["documents"]["video"]["run"]["api_usage"]
+    assert usage["calls"] == 0 and usage["usd"] == 0.0  # zero API calls
+    assert usage["estimated_usd"] == 0.0  # cache-aware estimate
+    # No stale frames from the null run beside the new document.
+    names = {p.name for p in (library / track_id / "frames").iterdir()}
+    doc_names = {r["path"].split("/")[-1] for s in doc2["shots"]
+                 for r in s["representative_frames"]}
+    assert names == doc_names
 
 
 def test_moved_original_is_prerequisite_error(tmp_path: Path) -> None:
