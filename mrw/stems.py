@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, config
+from . import TOOL_VERSION, config, versions
 from .library import Library, PrerequisiteError
 from .models import RunMetadata, StemsState
 
@@ -152,6 +152,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         prior is not None
         and prior.status == "ok"
         and prior.config_hash == stems_hash
+        and versions.is_current("stems", prior.algorithm_version)
         and (
             not prior.retained
             or all((stems_dir / f"{n}.flac").is_file() for n in STEM_NAMES)
@@ -225,6 +226,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 status="ok",
                 retained=cfg.stems.retain,
                 config_hash=stems_hash,
+                algorithm_version=versions.current("stems"),
                 run=run,
                 warning=(
                     f"mps separation failed, fell back to cpu: {mps_fallback_error}"

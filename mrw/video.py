@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, costs, hashing
+from . import TOOL_VERSION, canonical, config, costs, hashing, versions
 from .library import Library, PrerequisiteError
 from .models import (
     ApiUsage,
@@ -99,20 +99,42 @@ def normalize_shots(
     return out
 
 
+def palette_sample(frame):
+    """One frame's palette pixels: the H×W×3 frame downscaled (INTER_AREA)
+    to <= PALETTE_MAX_DIM on its long edge, flattened to (N, 3).
+
+    Downscaling must happen on the 2-D image. Pooling full-resolution
+    pixels into an N×1 column first and resizing that (the pre-fix code)
+    averaged runs of N/256 raster-order pixels — whole image rows — so a
+    half-red, half-blue frame clustered as purples.
+    """
+    import cv2
+
+    h, w = frame.shape[:2]
+    scale = PALETTE_MAX_DIM / max(h, w)
+    if scale < 1.0:
+        frame = cv2.resize(
+            frame, (max(1, int(w * scale)), max(1, int(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return frame.reshape(-1, 3)
+
+
 def palette_from_rgb(rgb) -> list[PaletteSwatch]:
-    """k-means (k=5, seed 0, n_init=1) in CIELab; swatches as sRGB hex +
-    proportion, sorted by proportion desc (ties: darker hex first)."""
+    """Palette of a single H×W×3 frame (see palette_from_samples)."""
+    return palette_from_samples(palette_sample(rgb))
+
+
+def palette_from_samples(samples) -> list[PaletteSwatch]:
+    """k-means (k=5, seed 0, n_init=1) in CIELab over (N, 3) uint8 RGB
+    samples (from palette_sample, pooled across a shot's frames); swatches
+    as sRGB hex + proportion, sorted by proportion desc (ties: darker hex
+    first)."""
     import cv2
     import numpy as np
     from sklearn.cluster import KMeans
 
-    h, w = rgb.shape[:2]
-    scale = PALETTE_MAX_DIM / max(h, w)
-    if scale < 1.0:
-        rgb = cv2.resize(
-            rgb, (max(1, int(w * scale)), max(1, int(h * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
+    rgb = np.ascontiguousarray(samples, dtype=np.uint8).reshape(-1, 1, 3)
     # cv2 uint8 Lab is uint8-scaled (L*255/100, a/b offset +128); keep the
     # clustering AND the reverse conversion in that same space.
     lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2Lab).reshape(-1, 3).astype("float64")
@@ -194,12 +216,42 @@ def encode_jpeg(rgb) -> bytes:
 # --- decode helpers ------------------------------------------------------------
 
 
+def _rotation_degrees(stream: dict) -> int:
+    """Display rotation of a video stream (display-matrix side data, or the
+    legacy `rotate` tag), normalised to 0/90/180/270."""
+    rot = None
+    for sd in stream.get("side_data_list") or []:
+        if "rotation" in sd:
+            rot = sd["rotation"]
+            break
+    if rot is None:
+        rot = (stream.get("tags") or {}).get("rotate")
+    try:
+        return int(round(float(rot))) % 360 if rot is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _display_dims(stream: dict) -> tuple[int, int]:
+    """(width, height) of decoded frames. ffmpeg auto-rotates on decode, so
+    a ±90°/270° stream (portrait phone video stored as landscape) decodes
+    with its stored dimensions swapped (VID-4)."""
+    width, height = int(stream["width"]), int(stream["height"])
+    if _rotation_degrees(stream) in (90, 270):
+        width, height = height, width
+    return width, height
+
+
 def _video_stream_info(path: Path) -> tuple[float, int, int, int]:
-    proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-print_format",
-         "json", "-show_streams", "-show_format", str(path)],
-        capture_output=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-print_format",
+             "json", "-show_streams", "-show_format", str(path)],
+            capture_output=True,
+            timeout=120,  # header read only; longer means a hung process
+        )
+    except subprocess.TimeoutExpired as e:
+        raise VideoError("ffprobe timed out after 120 s") from e
     if proc.returncode != 0:
         raise VideoError(f"ffprobe failed: {proc.stderr.decode()[:300]}")
     info = json.loads(proc.stdout)
@@ -209,7 +261,7 @@ def _video_stream_info(path: Path) -> tuple[float, int, int, int]:
         and not s.get("disposition", {}).get("attached_pic")
     )
     fps = float(Fraction(stream["avg_frame_rate"]))
-    width, height = int(stream["width"]), int(stream["height"])
+    width, height = _display_dims(stream)
     nb = stream.get("nb_frames")
     frame_count = int(nb) if nb else int(round(float(info["format"]["duration"]) * fps))
     return fps, width, height, frame_count
@@ -232,6 +284,14 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int)
         raise VideoError(f"frame extraction failed: {proc.stderr.decode()[:300]}")
     frame_bytes = width * height * 3
     raw = proc.stdout
+    wanted = len(set(indices))
+    if len(raw) != wanted * frame_bytes:
+        # A size mismatch means the frame geometry is wrong (rotation,
+        # aspect, mid-stream resize) — reshaping would scramble pixels.
+        raise VideoError(
+            f"decode returned {len(raw)} bytes for {wanted} frames of "
+            f"{width}x{height}; expected {wanted * frame_bytes}"
+        )
     frames = {}
     for slot, idx in enumerate(sorted(set(indices))):
         chunk = raw[slot * frame_bytes : (slot + 1) * frame_bytes]
@@ -241,16 +301,14 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int)
     return frames
 
 
-def _motion_pass(path: Path) -> tuple[list[float], list[float]]:
-    """12 fps / 320 px grayscale sequential decode → per-pair magnitudes."""
+def _motion_pass(path: Path, w0: int, h0: int) -> tuple[list[float], list[float]]:
+    """12 fps / 320 px grayscale sequential decode → per-pair magnitudes.
+
+    (w0, h0) are the display (post-rotation) dimensions from
+    _video_stream_info, so the scale keeps the true aspect ratio.
+    """
     import numpy as np
 
-    probe_h_proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
-        capture_output=True,
-    )
-    w0, h0 = (int(x) for x in probe_h_proc.stdout.decode().strip().split(",")[:2])
     height = max(2, round(MOTION_WIDTH * h0 / w0 / 2) * 2)
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(path),
@@ -332,6 +390,7 @@ def run_video(
         not estimate_only
         and prior.status == "ok"
         and prior.config_hash == video_hash
+        and versions.is_current("video", prior.algorithm_version)
         and (track_dir / "video.json").is_file()
     ):
         return VideoResult(track_id, -1, vcfg.caption_backend, None, None, True)
@@ -438,7 +497,7 @@ def run_video(
                 )
 
         backend, cache = make_backend(vcfg, track_dir / ".cache" / "captions")
-        motion_values, motion_times = _motion_pass(video_path)
+        motion_values, motion_times = _motion_pass(video_path, src_w, src_h)
 
         # PR #12 review [major]: frames are written to a temp dir and
         # swapped in whole on success (the stems temp-dir-and-rename
@@ -470,8 +529,8 @@ def run_video(
             import numpy as np
 
             pooled = np.concatenate(
-                [frames_rgb[i].reshape(-1, 3) for i in shot_indices]
-            ).reshape(-1, 1, 3)
+                [palette_sample(frames_rgb[i]) for i in shot_indices]
+            )
             caption = backend.caption(
                 [jpegs[i] for i in shot_indices],
                 [shas[i] for i in shot_indices],
@@ -484,7 +543,7 @@ def run_video(
                     start_frame=s_frame,
                     end_frame=e_frame,
                     representative_frames=reps,
-                    palette=palette_from_rgb(pooled),
+                    palette=palette_from_samples(pooled),
                     motion=shot_motion(motion_values, motion_times, s_t, e_t),
                     caption=caption,
                 )
@@ -541,6 +600,7 @@ def run_video(
                 schema_version=document.schema_version,
                 content_sha256=content_sha,
                 config_hash=video_hash,
+                algorithm_version=versions.current("video"),
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

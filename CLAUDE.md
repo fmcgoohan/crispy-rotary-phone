@@ -24,7 +24,7 @@ Architecture and milestones: `PLAN.md`. Document contracts: `schemas/`.
 - **Canonical serializer only.** Every document write goes through
   `mrw/canonical.py` — never `json.dump` directly. Precision contract:
   seconds 3 dp, dB 2 dp, Hz 1 dp, BPM 1 dp, ratios/confidences 3 dp.
-- **Platform.** macOS on Apple Silicon, Python 3.11+, environment managed
+- **Platform.** macOS on Apple Silicon, Python 3.11–3.12 (torch 2.5.1 has no 3.13 wheels), environment managed
   with `uv`. Prefer mature, well-maintained libraries.
 - **No copyrighted media** in the repo or tests — fixtures are generated
   (tones, click tracks, synthetic video). Library contents are private

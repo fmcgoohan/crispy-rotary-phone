@@ -12,21 +12,35 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import canonical
 
 
-class IngestConfig(BaseModel, frozen=True):
-    sample_rate: int = 44100
-    channels: int = 2
+class ConfigError(ValueError):
+    """Unreadable or invalid config file — a bad invocation (exit 2)."""
+
+
+class _Section(BaseModel):
+    # Fail closed (ARCH-2): a misspelled or renamed key is an error, not a
+    # silently ignored setting; inf/nan are rejected at load (TOML accepts
+    # them, and the canonical serializer refuses to hash them). Neither
+    # setting changes model_dump, so no stage_hash moves.
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+
+class IngestConfig(_Section):
+    # Fixed by the source schema (44100 Hz stereo FLAC, SCH-10); Literal so a
+    # different value is a config error instead of a permanently broken track.
+    sample_rate: Literal[44100] = 44100
+    channels: Literal[2] = 2
     copy_video: bool = False  # OQ-2 / review 001 R-7
 
 
-class StemsConfig(BaseModel, frozen=True):
+class StemsConfig(_Section):
     retain: bool = True  # OQ-3
     model: str = "htdemucs"
-    device: str = "auto"  # auto | cpu | mps
+    device: Literal["auto", "cpu", "mps"] = "auto"
     # Stem-file byte identity (OQ-13) is guaranteed at cpu_threads = 1;
     # raise for faster CPU separation when byte identity doesn't matter
     # (review 005, field finding F-2). Validated here, not clamped deep
@@ -34,7 +48,7 @@ class StemsConfig(BaseModel, frozen=True):
     cpu_threads: int = Field(default=1, ge=1)
 
 
-class FeaturesConfig(BaseModel, frozen=True):
+class FeaturesConfig(_Section):
     # Vocal-activity hysteresis on the vocal stem's RMS envelope (OQ-5);
     # the values are embedded in the document's vocal_activity.params (R-5).
     vocal_enter_db: float = -35.0
@@ -46,7 +60,7 @@ class FeaturesConfig(BaseModel, frozen=True):
     phase_fit_window_seconds: float = Field(default=0.03, gt=0)
 
 
-class LyricsConfig(BaseModel, frozen=True):
+class LyricsConfig(_Section):
     # OQ-7: faster-whisper on the isolated vocal stem; `small` default.
     model: str = "small"
     # Optional language pin; None = detect once and record (schema).
@@ -82,7 +96,7 @@ class LyricsConfig(BaseModel, frozen=True):
     decode_no_speech_threshold: float = 0.6
 
 
-class VideoConfig(BaseModel, frozen=True):
+class VideoConfig(_Section):
     # OQ-8: PySceneDetect ContentDetector.
     detector_threshold: float = 27.0
     min_shot_seconds: float = Field(default=0.4, gt=0)
@@ -98,7 +112,7 @@ class VideoConfig(BaseModel, frozen=True):
     caption_budget_usd_per_run: float = Field(default=0.50, ge=0)
 
 
-class Config(BaseModel, frozen=True):
+class Config(_Section):
     ingest: IngestConfig = IngestConfig()
     stems: StemsConfig = StemsConfig()
     features: FeaturesConfig = FeaturesConfig()
@@ -121,8 +135,19 @@ def load(path: Path | None = None) -> Config:
     """Load mrw.toml if present (cwd default), else built-in defaults."""
     candidate = path or Path("mrw.toml")
     if candidate.is_file():
-        with open(candidate, "rb") as f:
-            return Config.model_validate(tomllib.load(f))
+        try:
+            with open(candidate, "rb") as f:
+                data = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            raise ConfigError(f"cannot read config {candidate}: {e}") from e
+        try:
+            return Config.model_validate(data)
+        except ValidationError as e:
+            problems = "; ".join(
+                f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
+                for err in e.errors()
+            )
+            raise ConfigError(f"invalid config {candidate}: {problems}") from e
     if path is not None:
         raise FileNotFoundError(f"config file not found: {path}")
     return Config()

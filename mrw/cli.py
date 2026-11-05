@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import __version__, config
+from . import __version__, config, versions
 from .library import Library
 
 app = typer.Typer(
@@ -28,7 +28,7 @@ _CONFIG_OPT = typer.Option(
 def _load_config(config_path: Optional[Path]) -> config.Config:
     try:
         return config.load(config_path)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, config.ConfigError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
@@ -268,18 +268,24 @@ def status(
 ) -> None:
     """List tracks and per-document statuses.
 
-    A document recorded `ok` under a different config than the current one
-    is displayed as `stale` — derived here by comparing the stored
-    config_hash against the current stage hash; the manifest itself is
-    never rewritten by this command (review 006, note 2).
+    A document recorded `ok` under a different config, or by an older
+    version of its stage's code (mrw/versions.py), is displayed as `stale`
+    — derived here from the stored config_hash and algorithm_version; the
+    manifest itself is never rewritten by this command (review 006, note 2).
     """
     cfg = _load_config(config_path)
 
-    def _display(name: str, status: str, stored_hash: Optional[str]) -> str:
+    def _display(name: str, entry) -> str:
+        status = entry.status
+        if status != "ok":
+            return status
         section = config.STAGE_SECTION.get(name)
-        if status == "ok" and stored_hash and section:
+        stored_hash = entry.config_hash
+        if stored_hash and section:
             if stored_hash != config.stage_hash(getattr(cfg, section)):
                 return "stale"
+        if not versions.is_current(name, entry.algorithm_version):
+            return "stale"
         return status
 
     lib = Library(library)
@@ -293,24 +299,14 @@ def status(
             continue
         docs = manifest.documents
         parts = [
-            "source="
-            + _display("source", docs.source.status, docs.source.config_hash),
-            "features="
-            + _display(
-                "audio_features",
-                docs.audio_features.status,
-                docs.audio_features.config_hash,
-            ),
-            f"lyrics={docs.lyrics.status}",
-            f"video={docs.video.status}",
-            f"structure={docs.structure.status}",
+            "source=" + _display("source", docs.source),
+            "features=" + _display("audio_features", docs.audio_features),
+            "lyrics=" + _display("lyrics", docs.lyrics),
+            "video=" + _display("video", docs.video),
+            "structure=" + _display("structure", docs.structure),
         ]
         if manifest.stems is not None:
-            parts.insert(
-                1,
-                "stems="
-                + _display("stems", manifest.stems.status, manifest.stems.config_hash),
-            )
+            parts.insert(1, "stems=" + _display("stems", manifest.stems))
         typer.echo(f"{track_id}  {manifest.title}  " + " ".join(parts))
 
 

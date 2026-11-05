@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config
+from . import TOOL_VERSION, canonical, config, lrc, versions
 from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
 from .library import Library, PrerequisiteError
 from .models import (
@@ -53,7 +53,6 @@ from .models import (
     UntranscribedRegion,
 )
 
-_LRC_TS = re.compile(r"\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]")
 _MARKUP = re.compile(r"^\[[^\]]+\]$")
 _LABELS = ("intro", "verse", "chorus", "bridge", "outro")
 
@@ -158,7 +157,8 @@ def _transcribe(
     # get the rounding layer, but near-threshold decodes on quiet audio can
     # flip with thread order; one thread keeps same-machine runs stable.
     model = WhisperModel(
-        cfg.model, device="cpu", compute_type="int8", cpu_threads=1, num_workers=1
+        resolve_whisper_model(cfg.model),
+        device="cpu", compute_type="int8", cpu_threads=1, num_workers=1,
     )
     decode = dict(
         word_timestamps=True,
@@ -224,6 +224,31 @@ def _transcribe(
     return language, language_source, segments
 
 
+def resolve_whisper_model(model_name: str) -> str:
+    """Local directory of a cached Whisper model — never touches the network.
+
+    Passing a size name straight to WhisperModel makes faster-whisper call
+    huggingface_hub.snapshot_download(revision="main"), which queries the
+    Hub on every run while online and silently pulls a new snapshot if the
+    upstream branch moved (LYR-3). CLAUDE.md permits first-use weight
+    downloads only, via `mrw models fetch`; transcription runs from the
+    cache.
+    """
+    import os
+
+    if os.path.isdir(model_name):
+        return model_name
+    from faster_whisper.utils import download_model
+
+    try:
+        return download_model(model_name, local_files_only=True)
+    except FileNotFoundError as e:  # huggingface_hub LocalEntryNotFoundError
+        raise LyricsError(
+            f"whisper model '{model_name}' is not in the local model cache — "
+            "run `mrw models fetch` first (transcription never downloads)"
+        ) from e
+
+
 def fetch_whisper_model(model_name: str) -> Path:
     """Download the Whisper model if absent; returns its local directory."""
     from faster_whisper import download_model
@@ -238,20 +263,26 @@ def parse_supplied_lyrics(
 
     Markup = a bracketed-only line that is not an .lrc timestamp; excluded
     from lines[] and coverage math, label normalized when recognizable.
+    LRC ID tags ([ar:], [ti:], [offset:] …) are metadata and are skipped;
+    [offset:] shifts every hint. A line carrying several leading time tags
+    (compressed LRC) yields one SuppliedLine per tag, sharing its text and
+    source_line_index; such files are then ordered by hint so alignment
+    sees the timeline in order.
     """
     lines: list[SuppliedLine] = []
     markup: list[SuppliedMarkup] = []
-    for index, raw in enumerate(raw_text.splitlines()):
+    raw_lines = raw_text.splitlines()
+    offset = lrc.offset_seconds(raw_lines)
+    expanded = False
+    for index, raw in enumerate(raw_lines):
         stripped = raw.strip()
-        if not stripped:
+        if not stripped or lrc.ID_TAG.match(stripped):
             continue
-        hint = None
-        match = _LRC_TS.match(stripped)
-        if match:
-            minutes, seconds = int(match.group(1)), int(match.group(2))
-            frac = (match.group(3) or "0").ljust(3, "0")[:3]
-            hint = canonical.round_seconds(minutes * 60 + seconds + int(frac) / 1000)
-        text = _LRC_TS.sub("", stripped).strip()
+        hints: list[float | None] = [
+            canonical.round_seconds(max(0.0, t - offset))
+            for t in lrc.leading_time_tags(stripped)
+        ] or [None]
+        text = lrc.TIME_TAG.sub("", stripped).strip()
         if not text:
             continue
         if _MARKUP.fullmatch(text):
@@ -262,11 +293,17 @@ def parse_supplied_lyrics(
                     text=text,
                     label=label,
                     source_line_index=index,
-                    hint_seconds=hint,
+                    hint_seconds=hints[0],
                 )
             )
             continue
-        lines.append(SuppliedLine(text=text, source_line_index=index, hint_seconds=hint))
+        expanded = expanded or len(hints) > 1
+        for hint in hints:
+            lines.append(
+                SuppliedLine(text=text, source_line_index=index, hint_seconds=hint)
+            )
+    if expanded and all(l.hint_seconds is not None for l in lines):
+        lines.sort(key=lambda l: l.hint_seconds)  # stable: file order on ties
     return lines, markup
 
 
@@ -465,6 +502,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
     if (
         prior.status == "ok"
         and prior.config_hash == lyrics_hash
+        and versions.is_current("lyrics", prior.algorithm_version)
         and (track_dir / "lyrics.json").is_file()
     ):
         return LyricsResult(track_id, "?", -1, -1, already_done=True)
@@ -510,9 +548,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
         supplied_markup = None
         lines: list[LyricsLine] = []
         if mode == "aligned":
-            raw = (track_dir / lyrics_input["path"]).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            raw = lrc.decode_text((track_dir / lyrics_input["path"]).read_bytes())
             supplied_lines, markup_entries = parse_supplied_lyrics(raw)
             supplied_markup = markup_entries or None
             anchored = align_lines(
@@ -592,6 +628,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                 schema_version=document.schema_version,
                 content_sha256=content_sha,
                 config_hash=lyrics_hash,
+                algorithm_version=versions.current("lyrics"),
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

@@ -8,16 +8,16 @@ no-op.
 from __future__ import annotations
 
 import hashlib
-import re
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, hashing
+from . import TOOL_VERSION, canonical, config, hashing, lrc
 from .library import Library
 from .models import (
     DocumentEntry,
@@ -35,7 +35,6 @@ from .models import (
     StemsState,
 )
 
-_LRC_TIMESTAMP = re.compile(r"^\[\d{1,3}:\d{2}")
 
 
 class IngestError(RuntimeError):
@@ -50,8 +49,16 @@ class IngestResult:
     already_ingested: bool
 
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    proc = subprocess.run(cmd, capture_output=True)
+# ffprobe only reads headers; anything slower than this is a hung process
+# (damaged or pathological input), not a big file.
+PROBE_TIMEOUT_SECONDS = 120
+
+
+def _run(cmd: list[str], timeout: float | None = None) -> subprocess.CompletedProcess:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise IngestError(f"{cmd[0]} timed out after {timeout:.0f} s") from e
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", "replace").strip()
         raise IngestError(f"{cmd[0]} failed: {stderr[:500]}")
@@ -71,7 +78,8 @@ def probe(path: Path) -> dict:
             "-show_format",
             "-show_streams",
             str(path),
-        ]
+        ],
+        timeout=PROBE_TIMEOUT_SECONDS,
     )
     return json.loads(proc.stdout)
 
@@ -108,12 +116,19 @@ def _decode_hash_and_duration(
     ]
     h = hashlib.sha256()
     total = 0
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+    # stderr goes to a temp file, not a pipe: with both piped and only
+    # stdout drained, ffmpeg blocks once it has written ~64 KB of decode
+    # errors (damaged media) and this loop waits on it for ever (SEC-5).
+    with tempfile.TemporaryFile() as err, subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=err
+    ) as proc:
         assert proc.stdout is not None
         while chunk := proc.stdout.read(1 << 20):
             h.update(chunk)
             total += len(chunk)
-        stderr = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+        proc.wait()
+        err.seek(0)
+        stderr = err.read().decode("utf-8", "replace")
     if proc.returncode != 0:
         raise IngestError(f"ffmpeg decode failed: {stderr.strip()[:500]}")
     bytes_per_second = sample_rate * channels * 2
@@ -145,14 +160,14 @@ def _lyrics_input(lyrics_path: Path, track_dir: Path) -> LyricsInput:
     fmt = "lrc" if lyrics_path.suffix.lower() == ".lrc" else "txt"
     dest = track_dir / f"lyrics_input.{fmt}"
     shutil.copyfile(lyrics_path, dest)
-    text = dest.read_text(encoding="utf-8", errors="replace")
+    text = lrc.decode_text(dest.read_bytes())
     lines = [ln for ln in text.splitlines() if ln.strip()]
     return LyricsInput(
         path=dest.name,
         format=fmt,
         sha256=hashing.sha256_file(dest),
         line_count=len(lines),
-        has_timestamps=any(_LRC_TIMESTAMP.match(ln) for ln in lines),
+        has_timestamps=any(lrc.LEADING_TIME_TAGS.match(ln.strip()) for ln in lines),
     )
 
 
