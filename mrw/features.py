@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, versions
-from .library import Library, PrerequisiteError
+from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     AudioFeaturesDocument,
     Beats,
@@ -284,7 +284,9 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
     stems_state = manifest.stems
     if stems_state is None or stems_state.status != "ok":
         raise PrerequisiteError(
-            f"track {track_id}: stems are not separated — run `mrw stems {track_id}` first"
+            f"track {track_id}: stems are not separated (status "
+            f"{stems_state.status if stems_state else 'missing'}) — run "
+            f"`mrw stems {track_id}` first"
         )
     if not stems_state.retained or not all(
         (stems_dir / f"{n}.flac").is_file() for n in STEM_NAMES
@@ -309,8 +311,13 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
     t0 = time.monotonic()
 
     def _record(entry: DocumentEntry) -> None:
-        manifest.documents.audio_features = entry
-        library.write_manifest(track_id, manifest)
+        def apply(m) -> None:
+            m.documents.audio_features = entry
+            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+                mark_dependents_stale(m, "audio_features")
+
+        apply(manifest)
+        library.update_manifest(track_id, apply)
 
     try:
         mix_mono, mix_stereo = _load(track_dir / "source_audio.flac")

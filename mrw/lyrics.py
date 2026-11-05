@@ -40,7 +40,7 @@ from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, lrc, versions
 from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
-from .library import Library, PrerequisiteError
+from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     DocumentEntry,
     LyricsCoverage,
@@ -481,7 +481,8 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
         track_dir / "audio_features.json"
     ).is_file():
         raise PrerequisiteError(
-            f"track {track_id}: audio features missing — run `mrw features "
+            f"track {track_id}: audio features missing or "
+            f"{manifest.documents.audio_features.status} — run `mrw features "
             f"{track_id}` first (vocal_activity is consumed here)"
         )
     vocals_path = track_dir / "stems" / "vocals.flac"
@@ -518,8 +519,13 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
     t0 = time.monotonic()
 
     def _record(entry: DocumentEntry) -> None:
-        manifest.documents.lyrics = entry
-        library.write_manifest(track_id, manifest)
+        def apply(m) -> None:
+            m.documents.lyrics = entry
+            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+                mark_dependents_stale(m, "lyrics")
+
+        apply(manifest)
+        library.update_manifest(track_id, apply)
 
     try:
         region_tuples = [
