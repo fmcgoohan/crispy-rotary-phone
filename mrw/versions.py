@@ -20,7 +20,9 @@ from typing import Optional
 ALGORITHM_VERSIONS: dict[str, int] = {
     "stems": 1,
     "audio_features": 1,
-    "lyrics": 1,
+    # 2: LRC parsing (one line per time tag, ID tags skipped, [offset:],
+    #    mm:ss:xx) and BOM/UTF-16/cp1252-aware decoding (LYR-5/7, SEC-7).
+    "lyrics": 2,
     # 2: palette clustered from per-frame downscaled pixels (was averages
     #    of whole image rows — VID-1); rotation-aware frame geometry
     #    (portrait phone video decoded scrambled — VID-4).

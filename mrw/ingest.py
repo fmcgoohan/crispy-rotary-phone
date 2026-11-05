@@ -8,7 +8,6 @@ no-op.
 from __future__ import annotations
 
 import hashlib
-import re
 import shutil
 import subprocess
 import time
@@ -17,7 +16,7 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, hashing
+from . import TOOL_VERSION, canonical, config, hashing, lrc
 from .library import Library
 from .models import (
     DocumentEntry,
@@ -35,7 +34,6 @@ from .models import (
     StemsState,
 )
 
-_LRC_TIMESTAMP = re.compile(r"^\[\d{1,3}:\d{2}")
 
 
 class IngestError(RuntimeError):
@@ -145,14 +143,14 @@ def _lyrics_input(lyrics_path: Path, track_dir: Path) -> LyricsInput:
     fmt = "lrc" if lyrics_path.suffix.lower() == ".lrc" else "txt"
     dest = track_dir / f"lyrics_input.{fmt}"
     shutil.copyfile(lyrics_path, dest)
-    text = dest.read_text(encoding="utf-8", errors="replace")
+    text = lrc.decode_text(dest.read_bytes())
     lines = [ln for ln in text.splitlines() if ln.strip()]
     return LyricsInput(
         path=dest.name,
         format=fmt,
         sha256=hashing.sha256_file(dest),
         line_count=len(lines),
-        has_timestamps=any(_LRC_TIMESTAMP.match(ln) for ln in lines),
+        has_timestamps=any(lrc.LEADING_TIME_TAGS.match(ln.strip()) for ln in lines),
     )
 
 
