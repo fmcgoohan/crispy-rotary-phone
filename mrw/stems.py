@@ -171,11 +171,14 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     mps_fallback_error: str | None = None
 
     def _record(state: StemsState) -> None:
-        manifest.stems = state
-        if state.status == "ok":
-            # No stems digest yet: any fresh separation invalidates consumers.
-            mark_dependents_stale(manifest, "stems")
-        library.write_manifest(track_id, manifest)
+        def apply(m) -> None:
+            m.stems = state
+            if state.status == "ok":
+                # No stems digest yet: any fresh separation invalidates consumers.
+                mark_dependents_stale(m, "stems")
+
+        apply(manifest)
+        library.update_manifest(track_id, apply)
 
     try:
         # Cheap prerequisite validation first, heavy imports last (F-2/T5):

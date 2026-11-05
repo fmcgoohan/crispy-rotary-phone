@@ -311,10 +311,13 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
     t0 = time.monotonic()
 
     def _record(entry: DocumentEntry) -> None:
-        manifest.documents.audio_features = entry
-        if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
-            mark_dependents_stale(manifest, "audio_features")
-        library.write_manifest(track_id, manifest)
+        def apply(m) -> None:
+            m.documents.audio_features = entry
+            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+                mark_dependents_stale(m, "audio_features")
+
+        apply(manifest)
+        library.update_manifest(track_id, apply)
 
     try:
         mix_mono, mix_stereo = _load(track_dir / "source_audio.flac")

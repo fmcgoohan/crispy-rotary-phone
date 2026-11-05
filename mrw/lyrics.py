@@ -519,10 +519,13 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
     t0 = time.monotonic()
 
     def _record(entry: DocumentEntry) -> None:
-        manifest.documents.lyrics = entry
-        if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
-            mark_dependents_stale(manifest, "lyrics")
-        library.write_manifest(track_id, manifest)
+        def apply(m) -> None:
+            m.documents.lyrics = entry
+            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+                mark_dependents_stale(m, "lyrics")
+
+        apply(manifest)
+        library.update_manifest(track_id, apply)
 
     try:
         region_tuples = [

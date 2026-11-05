@@ -7,8 +7,11 @@ volatile data.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import re
 from pathlib import Path
+from typing import Callable, Iterator
 
 from pydantic import BaseModel
 
@@ -78,6 +81,36 @@ class Library:
     def write_manifest(self, track_id: str, manifest: Manifest) -> None:
         self.track_dir(track_id).mkdir(parents=True, exist_ok=True)
         canonical.write(self.manifest_path(track_id), doc_dump(manifest))
+
+    @contextlib.contextmanager
+    def _manifest_lock(self, track_id: str) -> Iterator[None]:
+        lock_path = self.track_dir(track_id) / ".manifest.lock"
+        with open(lock_path, "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
+    def update_manifest(
+        self, track_id: str, mutate: Callable[[Manifest], None]
+    ) -> Manifest:
+        """Apply one stage's change to the manifest ON DISK, atomically.
+
+        Stages used to read the manifest at start and rewrite the whole file
+        at the end, so two commands on one track (stems in one terminal,
+        video in another) silently undid each other's entries, API spend
+        included (ORCH-4). This re-reads under an exclusive flock, applies
+        only `mutate`, and writes before releasing. flock is advisory and
+        reliable on local filesystems, which is where a library lives.
+        """
+        with self._manifest_lock(track_id):
+            manifest = self.read_manifest(track_id)
+            if manifest is None:
+                raise PrerequisiteError(f"no manifest for track {track_id}")
+            mutate(manifest)
+            self.write_manifest(track_id, manifest)
+            return manifest
 
     def write_document(self, track_id: str, filename: str, document: BaseModel) -> str:
         """Write an analysis document atomically; returns its content sha256."""
