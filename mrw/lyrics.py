@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config
+from . import TOOL_VERSION, canonical, config, versions
 from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
 from .library import Library, PrerequisiteError
 from .models import (
@@ -465,6 +465,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
     if (
         prior.status == "ok"
         and prior.config_hash == lyrics_hash
+        and versions.is_current("lyrics", prior.algorithm_version)
         and (track_dir / "lyrics.json").is_file()
     ):
         return LyricsResult(track_id, "?", -1, -1, already_done=True)
@@ -592,6 +593,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                 schema_version=document.schema_version,
                 content_sha256=content_sha,
                 config_hash=lyrics_hash,
+                algorithm_version=versions.current("lyrics"),
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

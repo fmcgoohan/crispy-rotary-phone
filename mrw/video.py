@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, costs, hashing
+from . import TOOL_VERSION, canonical, config, costs, hashing, versions
 from .library import Library, PrerequisiteError
 from .models import (
     ApiUsage,
@@ -332,6 +332,7 @@ def run_video(
         not estimate_only
         and prior.status == "ok"
         and prior.config_hash == video_hash
+        and versions.is_current("video", prior.algorithm_version)
         and (track_dir / "video.json").is_file()
     ):
         return VideoResult(track_id, -1, vcfg.caption_backend, None, None, True)
@@ -541,6 +542,7 @@ def run_video(
                 schema_version=document.schema_version,
                 content_sha256=content_sha,
                 config_hash=video_hash,
+                algorithm_version=versions.current("video"),
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

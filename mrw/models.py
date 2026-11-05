@@ -23,7 +23,9 @@ VIDEO_SCHEMA_VERSION = "1.0.0"
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
 # 1.3.0: additive — optional `api_usage` on run metadata (M5 cost ledger).
-MANIFEST_SCHEMA_VERSION = "1.3.0"
+# 1.4.0: additive — optional `algorithm_version` on document entries and the
+# stems block (mrw/versions.py: code changes mark documents stale).
+MANIFEST_SCHEMA_VERSION = "1.4.0"
 
 Status = Literal["ok", "pending", "failed", "stale", "not_applicable"]
 
@@ -316,6 +318,7 @@ class DocumentEntry(BaseModel):
     schema_version: Optional[str] = None
     content_sha256: Optional[str] = None
     config_hash: Optional[str] = None
+    algorithm_version: Optional[int] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
 
@@ -332,6 +335,7 @@ class StemsState(BaseModel):
     status: Status
     retained: bool
     config_hash: Optional[str] = None
+    algorithm_version: Optional[int] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
     warning: Optional[str] = None
