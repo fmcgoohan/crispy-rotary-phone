@@ -21,7 +21,9 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     "stems": 1,
     "audio_features": 1,
     "lyrics": 1,
-    "video": 1,
+    # 2: palette clustered from per-frame downscaled pixels (was averages
+    #    of whole image rows — VID-1).
+    "video": 2,
 }
 
 

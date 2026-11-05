@@ -64,10 +64,12 @@ def test_status_shows_lyrics_and_video_stale_on_config_change(tmp_path):
     defaults = config.Config()
     manifest["documents"]["lyrics"] = {
         "status": "ok", "path": "lyrics.json",
-        "config_hash": config.stage_hash(defaults.lyrics)}
+        "config_hash": config.stage_hash(defaults.lyrics),
+        "algorithm_version": versions.current("lyrics")}
     manifest["documents"]["video"] = {
         "status": "ok", "path": "video.json",
-        "config_hash": config.stage_hash(defaults.video)}
+        "config_hash": config.stage_hash(defaults.video),
+        "algorithm_version": versions.current("video")}
     mpath.write_text(json.dumps(manifest))
 
     out = _status(library)

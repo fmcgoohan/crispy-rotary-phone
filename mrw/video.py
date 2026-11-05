@@ -99,20 +99,42 @@ def normalize_shots(
     return out
 
 
+def palette_sample(frame):
+    """One frame's palette pixels: the H×W×3 frame downscaled (INTER_AREA)
+    to <= PALETTE_MAX_DIM on its long edge, flattened to (N, 3).
+
+    Downscaling must happen on the 2-D image. Pooling full-resolution
+    pixels into an N×1 column first and resizing that (the pre-fix code)
+    averaged runs of N/256 raster-order pixels — whole image rows — so a
+    half-red, half-blue frame clustered as purples.
+    """
+    import cv2
+
+    h, w = frame.shape[:2]
+    scale = PALETTE_MAX_DIM / max(h, w)
+    if scale < 1.0:
+        frame = cv2.resize(
+            frame, (max(1, int(w * scale)), max(1, int(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return frame.reshape(-1, 3)
+
+
 def palette_from_rgb(rgb) -> list[PaletteSwatch]:
-    """k-means (k=5, seed 0, n_init=1) in CIELab; swatches as sRGB hex +
-    proportion, sorted by proportion desc (ties: darker hex first)."""
+    """Palette of a single H×W×3 frame (see palette_from_samples)."""
+    return palette_from_samples(palette_sample(rgb))
+
+
+def palette_from_samples(samples) -> list[PaletteSwatch]:
+    """k-means (k=5, seed 0, n_init=1) in CIELab over (N, 3) uint8 RGB
+    samples (from palette_sample, pooled across a shot's frames); swatches
+    as sRGB hex + proportion, sorted by proportion desc (ties: darker hex
+    first)."""
     import cv2
     import numpy as np
     from sklearn.cluster import KMeans
 
-    h, w = rgb.shape[:2]
-    scale = PALETTE_MAX_DIM / max(h, w)
-    if scale < 1.0:
-        rgb = cv2.resize(
-            rgb, (max(1, int(w * scale)), max(1, int(h * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
+    rgb = np.ascontiguousarray(samples, dtype=np.uint8).reshape(-1, 1, 3)
     # cv2 uint8 Lab is uint8-scaled (L*255/100, a/b offset +128); keep the
     # clustering AND the reverse conversion in that same space.
     lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2Lab).reshape(-1, 3).astype("float64")
@@ -471,8 +493,8 @@ def run_video(
             import numpy as np
 
             pooled = np.concatenate(
-                [frames_rgb[i].reshape(-1, 3) for i in shot_indices]
-            ).reshape(-1, 1, 3)
+                [palette_sample(frames_rgb[i]) for i in shot_indices]
+            )
             caption = backend.caption(
                 [jpegs[i] for i in shot_indices],
                 [shas[i] for i in shot_indices],
@@ -485,7 +507,7 @@ def run_video(
                     start_frame=s_frame,
                     end_frame=e_frame,
                     representative_frames=reps,
-                    palette=palette_from_rgb(pooled),
+                    palette=palette_from_samples(pooled),
                     motion=shot_motion(motion_values, motion_times, s_t, e_t),
                     caption=caption,
                 )
