@@ -28,7 +28,7 @@ _CONFIG_OPT = typer.Option(
 def _load_config(config_path: Optional[Path]) -> config.Config:
     try:
         return config.load(config_path)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, config.ConfigError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 

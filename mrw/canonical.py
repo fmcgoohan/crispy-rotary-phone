@@ -14,29 +14,39 @@ from pathlib import Path
 from typing import Any
 
 # Precision contract: seconds 3 dp, dB 2 dp, Hz 1 dp, BPM 1 dp, ratios/confidences 3 dp.
+# `+ 0.0` turns -0.0 into 0.0, so values jittering around zero cannot flip
+# between "-0.0" and "0.0" bytes.
 def round_seconds(x: float) -> float:
-    return round(float(x), 3)
+    return round(float(x), 3) + 0.0
 
 
 def round_db(x: float) -> float:
-    return round(float(x), 2)
+    return round(float(x), 2) + 0.0
 
 
 def round_hz(x: float) -> float:
-    return round(float(x), 1)
+    return round(float(x), 1) + 0.0
 
 
 def round_ratio(x: float) -> float:
-    return round(float(x), 3)
+    return round(float(x), 3) + 0.0
 
 
 def round_bpm(x: float) -> float:
-    return round(float(x), 1)
+    return round(float(x), 1) + 0.0
 
 
 def dumps(data: Any) -> str:
-    """Serialize to the canonical text form (insertion order, trailing newline)."""
-    return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
+    """Serialize to the canonical text form (insertion order, trailing newline).
+
+    allow_nan=False: NaN/±Infinity are not JSON (Swift's JSONDecoder rejects
+    the whole document), so a non-finite value fails the write loudly
+    instead of being emitted as a bare NaN token (PLAN §8).
+    """
+    return (
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=False, allow_nan=False)
+        + "\n"
+    )
 
 
 def write(path: Path, data: Any) -> str:
