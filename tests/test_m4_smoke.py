@@ -454,8 +454,19 @@ def _run_chain(wav: Path, tmp_path: Path) -> tuple[Path, str]:
     return library, track_id
 
 
+@pytest.fixture
+def whisper_weights() -> None:
+    """Real-engine tests: transcription only reads the local model cache
+    (resolve_whisper_model), so do the sanctioned first-use download here,
+    as `mrw models fetch` would."""
+    from mrw.config import LyricsConfig
+    from mrw.lyrics import fetch_whisper_model
+
+    fetch_whisper_model(LyricsConfig().model)
+
+
 @pytest.mark.slow
-def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
+def test_transcribed_degenerate_no_vocals(tmp_path, whisper_weights) -> None:
     """No vocals → the assertion is HONESTY, not a hallucination count.
 
     Whisper's hallucination count on near-silence varies by environment
@@ -505,7 +516,7 @@ def test_transcribed_degenerate_no_vocals(tmp_path) -> None:
 
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
-def test_espeak_ground_truth_transcription(tmp_path) -> None:
+def test_espeak_ground_truth_transcription(tmp_path, whisper_weights) -> None:
     """Synthesized speech over a click bed survives separation+transcription."""
     speech_raw = tmp_path / "speech_raw.wav"
     subprocess.run(
