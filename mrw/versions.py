@@ -22,7 +22,8 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     "audio_features": 1,
     "lyrics": 1,
     # 2: palette clustered from per-frame downscaled pixels (was averages
-    #    of whole image rows — VID-1).
+    #    of whole image rows — VID-1); rotation-aware frame geometry
+    #    (portrait phone video decoded scrambled — VID-4).
     "video": 2,
 }
 

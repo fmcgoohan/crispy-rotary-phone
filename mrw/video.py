@@ -216,6 +216,32 @@ def encode_jpeg(rgb) -> bytes:
 # --- decode helpers ------------------------------------------------------------
 
 
+def _rotation_degrees(stream: dict) -> int:
+    """Display rotation of a video stream (display-matrix side data, or the
+    legacy `rotate` tag), normalised to 0/90/180/270."""
+    rot = None
+    for sd in stream.get("side_data_list") or []:
+        if "rotation" in sd:
+            rot = sd["rotation"]
+            break
+    if rot is None:
+        rot = (stream.get("tags") or {}).get("rotate")
+    try:
+        return int(round(float(rot))) % 360 if rot is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _display_dims(stream: dict) -> tuple[int, int]:
+    """(width, height) of decoded frames. ffmpeg auto-rotates on decode, so
+    a ±90°/270° stream (portrait phone video stored as landscape) decodes
+    with its stored dimensions swapped (VID-4)."""
+    width, height = int(stream["width"]), int(stream["height"])
+    if _rotation_degrees(stream) in (90, 270):
+        width, height = height, width
+    return width, height
+
+
 def _video_stream_info(path: Path) -> tuple[float, int, int, int]:
     proc = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-print_format",
@@ -231,7 +257,7 @@ def _video_stream_info(path: Path) -> tuple[float, int, int, int]:
         and not s.get("disposition", {}).get("attached_pic")
     )
     fps = float(Fraction(stream["avg_frame_rate"]))
-    width, height = int(stream["width"]), int(stream["height"])
+    width, height = _display_dims(stream)
     nb = stream.get("nb_frames")
     frame_count = int(nb) if nb else int(round(float(info["format"]["duration"]) * fps))
     return fps, width, height, frame_count
@@ -254,6 +280,14 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int)
         raise VideoError(f"frame extraction failed: {proc.stderr.decode()[:300]}")
     frame_bytes = width * height * 3
     raw = proc.stdout
+    wanted = len(set(indices))
+    if len(raw) != wanted * frame_bytes:
+        # A size mismatch means the frame geometry is wrong (rotation,
+        # aspect, mid-stream resize) — reshaping would scramble pixels.
+        raise VideoError(
+            f"decode returned {len(raw)} bytes for {wanted} frames of "
+            f"{width}x{height}; expected {wanted * frame_bytes}"
+        )
     frames = {}
     for slot, idx in enumerate(sorted(set(indices))):
         chunk = raw[slot * frame_bytes : (slot + 1) * frame_bytes]
@@ -263,16 +297,14 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int)
     return frames
 
 
-def _motion_pass(path: Path) -> tuple[list[float], list[float]]:
-    """12 fps / 320 px grayscale sequential decode → per-pair magnitudes."""
+def _motion_pass(path: Path, w0: int, h0: int) -> tuple[list[float], list[float]]:
+    """12 fps / 320 px grayscale sequential decode → per-pair magnitudes.
+
+    (w0, h0) are the display (post-rotation) dimensions from
+    _video_stream_info, so the scale keeps the true aspect ratio.
+    """
     import numpy as np
 
-    probe_h_proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
-        capture_output=True,
-    )
-    w0, h0 = (int(x) for x in probe_h_proc.stdout.decode().strip().split(",")[:2])
     height = max(2, round(MOTION_WIDTH * h0 / w0 / 2) * 2)
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(path),
@@ -461,7 +493,7 @@ def run_video(
                 )
 
         backend, cache = make_backend(vcfg, track_dir / ".cache" / "captions")
-        motion_values, motion_times = _motion_pass(video_path)
+        motion_values, motion_times = _motion_pass(video_path, src_w, src_h)
 
         # PR #12 review [major]: frames are written to a temp dir and
         # swapped in whole on success (the stems temp-dir-and-rename

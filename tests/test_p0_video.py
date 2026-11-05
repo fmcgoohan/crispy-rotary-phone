@@ -40,3 +40,65 @@ def test_pooling_across_frames_weights_pixels():
         == {(True, False), (False, True)}
     assert all(abs(s.proportion - 0.5) < 0.01 for s in top)
     assert palette_from_samples(samples) == swatches  # deterministic
+
+
+# --- P0-2 (VID-4): rotated (portrait phone) video ------------------------------
+
+import shutil
+import subprocess
+
+import pytest
+
+from mrw.video import _extract_frames_rgb, _motion_pass, _video_stream_info
+
+needs_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="ffmpeg/ffprobe not available"
+)
+
+
+def _rotated_clip(tmp_path):
+    # 320x180 stored, tagged with a 90° display matrix (how phones store
+    # portrait video). Left half red, right half blue in stored orientation.
+    plain = tmp_path / "plain.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y",
+         "-f", "lavfi", "-i", "color=c=red:s=160x180:r=10:d=1",
+         "-f", "lavfi", "-i", "color=c=blue:s=160x180:r=10:d=1",
+         "-filter_complex", "[0][1]hstack", "-pix_fmt", "yuv444p",
+         "-c:v", "libx264", "-qp", "0", str(plain)],
+        check=True,
+    )
+    rotated = tmp_path / "rotated.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-display_rotation", "90",
+         "-i", str(plain), "-c", "copy", str(rotated)],
+        check=True,
+    )
+    return rotated
+
+
+@needs_ffmpeg
+def test_rotated_video_frames_have_display_geometry(tmp_path):
+    clip = _rotated_clip(tmp_path)
+    fps, w, h, n = _video_stream_info(clip)
+    assert (w, h) == (180, 320)  # portrait, not the stored 320x180
+    frame = _extract_frames_rgb(clip, [0], w, h)[0]
+    assert frame.shape == (320, 180, 3)
+    # Upright frame: the stored left/right halves become top/bottom (or
+    # bottom/top) halves, each a solid colour — never interleaved stripes.
+    top, bottom = frame[:150], frame[170:]
+    for half in (top, bottom):
+        assert half.std(axis=(0, 1)).max() < 8
+    assert {tuple(top.mean(axis=(0, 1)) > 128), tuple(bottom.mean(axis=(0, 1)) > 128)} \
+        == {(True, False, False), (False, False, True)}
+    values, times = _motion_pass(clip, w, h)
+    assert len(values) == len(times) and max(values) < 0.002  # static scene
+
+
+@needs_ffmpeg
+def test_frame_geometry_mismatch_fails_loudly(tmp_path):
+    from mrw.video import VideoError
+
+    clip = _rotated_clip(tmp_path)
+    with pytest.raises(VideoError, match="bytes"):
+        _extract_frames_rgb(clip, [0], 320, 179)
