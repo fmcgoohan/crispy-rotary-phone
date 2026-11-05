@@ -157,7 +157,8 @@ def _transcribe(
     # get the rounding layer, but near-threshold decodes on quiet audio can
     # flip with thread order; one thread keeps same-machine runs stable.
     model = WhisperModel(
-        cfg.model, device="cpu", compute_type="int8", cpu_threads=1, num_workers=1
+        resolve_whisper_model(cfg.model),
+        device="cpu", compute_type="int8", cpu_threads=1, num_workers=1,
     )
     decode = dict(
         word_timestamps=True,
@@ -221,6 +222,31 @@ def _transcribe(
             )
         )
     return language, language_source, segments
+
+
+def resolve_whisper_model(model_name: str) -> str:
+    """Local directory of a cached Whisper model — never touches the network.
+
+    Passing a size name straight to WhisperModel makes faster-whisper call
+    huggingface_hub.snapshot_download(revision="main"), which queries the
+    Hub on every run while online and silently pulls a new snapshot if the
+    upstream branch moved (LYR-3). CLAUDE.md permits first-use weight
+    downloads only, via `mrw models fetch`; transcription runs from the
+    cache.
+    """
+    import os
+
+    if os.path.isdir(model_name):
+        return model_name
+    from faster_whisper.utils import download_model
+
+    try:
+        return download_model(model_name, local_files_only=True)
+    except FileNotFoundError as e:  # huggingface_hub LocalEntryNotFoundError
+        raise LyricsError(
+            f"whisper model '{model_name}' is not in the local model cache — "
+            "run `mrw models fetch` first (transcription never downloads)"
+        ) from e
 
 
 def fetch_whisper_model(model_name: str) -> Path:

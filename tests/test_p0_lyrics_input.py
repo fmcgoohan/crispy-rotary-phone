@@ -92,3 +92,25 @@ def test_ingest_sees_timestamps_behind_a_bom(tmp_path):
     track = next(p for p in library.iterdir() if p.is_dir())
     li = json.loads((track / "source.json").read_text())["lyrics_input"]
     assert li["has_timestamps"] is True
+
+
+def test_whisper_model_resolves_from_cache_only(tmp_path, monkeypatch):
+    # P0-5 (LYR-3): an uncached model fails with a fetch hint and makes no
+    # network connection at all.
+    import socket
+
+    from mrw.lyrics import LyricsError, resolve_whisper_model
+
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty-cache"))
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE",
+                        str(tmp_path / "empty-cache"))
+
+    def no_network(*a, **k):
+        raise AssertionError("network access attempted")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    with pytest.raises(LyricsError, match="mrw models fetch"):
+        resolve_whisper_model("small")
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    assert resolve_whisper_model(str(model_dir)) == str(model_dir)
