@@ -51,8 +51,17 @@ import pytest
 
 from mrw.video import _extract_frames_rgb, _motion_pass, _video_stream_info
 
+def _ffmpeg_has_display_rotation() -> bool:
+    if shutil.which("ffmpeg") is None:
+        return False
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-h", "full"],
+                         capture_output=True, text=True).stdout
+    return "display_rotation" in out  # input option added in FFmpeg 6
+
+
 needs_ffmpeg = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None, reason="ffmpeg/ffprobe not available"
+    not _ffmpeg_has_display_rotation(),
+    reason="needs ffmpeg >= 6 (-display_rotation) to build the fixture",
 )
 
 

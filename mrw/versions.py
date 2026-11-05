@@ -11,6 +11,14 @@ Kept apart from stage_hash on purpose: folding it into the config hash would
 make every bump re-separate every track's stems, and it keeps the
 config-evolution policy (review 006) and the code-evolution policy separate.
 Entries written before this field existed carry no version and count as 1.
+
+Ingest ("source") is deliberately unversioned for now: ingest never
+re-runs on an existing track (re-ingest is a no-op), so a version could
+only ever display a stale that nothing can clear. Known consequence of the
+lyrics-decoding fix (lyrics 2): source.json lyrics_input.line_count /
+has_timestamps for a BOM or non-UTF-8 lyrics file differ between tracks
+ingested before and after it. The lyrics stage re-decodes the file itself
+and reads neither field. Version source once ingest can update a track.
 """
 
 from __future__ import annotations

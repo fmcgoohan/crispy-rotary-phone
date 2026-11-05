@@ -69,6 +69,8 @@ def test_decode_text_handles_bom_utf16_and_cp1252(data):
 
 def test_decode_text_never_fails():
     assert lrc.decode_text(bytes(range(256)))  # latin-1 fallback
+    truncated = codecs.BOM_UTF16_LE + "[00:01]hi".encode("utf-16-le") + b"x"
+    assert isinstance(lrc.decode_text(truncated), str)
 
 
 @pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None,

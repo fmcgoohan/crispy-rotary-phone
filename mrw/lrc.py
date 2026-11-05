@@ -42,7 +42,10 @@ def decode_text(data: bytes) -> str:
     """
     for bom, encoding in _BOMS:
         if data.startswith(bom):
-            return data[len(bom):].decode(encoding)
+            try:
+                return data[len(bom):].decode(encoding)
+            except UnicodeDecodeError:
+                break  # truncated/corrupt: fall through to the byte-safe chain
     for encoding in ("utf-8", "cp1252"):
         try:
             return data.decode(encoding)
