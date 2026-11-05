@@ -243,11 +243,15 @@ def _display_dims(stream: dict) -> tuple[int, int]:
 
 
 def _video_stream_info(path: Path) -> tuple[float, int, int, int]:
-    proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-print_format",
-         "json", "-show_streams", "-show_format", str(path)],
-        capture_output=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-print_format",
+             "json", "-show_streams", "-show_format", str(path)],
+            capture_output=True,
+            timeout=120,  # header read only; longer means a hung process
+        )
+    except subprocess.TimeoutExpired as e:
+        raise VideoError("ffprobe timed out after 120 s") from e
     if proc.returncode != 0:
         raise VideoError(f"ffprobe failed: {proc.stderr.decode()[:300]}")
     info = json.loads(proc.stdout)
