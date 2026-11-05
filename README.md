@@ -15,7 +15,7 @@ Design docs: [`PLAN.md`](PLAN.md) (architecture, milestones),
 
 ## Setup
 
-Requires macOS (Apple Silicon), Python 3.11+, [`uv`](https://docs.astral.sh/uv/),
+Requires macOS (Apple Silicon), Python 3.11 or 3.12 (torch 2.5.1, pinned for demucs, has no 3.13 wheels; `.python-version` makes uv pick 3.12), [`uv`](https://docs.astral.sh/uv/),
 and `ffmpeg`/`ffprobe` on PATH (`brew install ffmpeg uv`).
 
 ```sh
