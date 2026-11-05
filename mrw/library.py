@@ -102,7 +102,10 @@ class Library:
         video in another) silently undid each other's entries, API spend
         included (ORCH-4). This re-reads under an exclusive flock, applies
         only `mutate`, and writes before releasing. flock is advisory and
-        reliable on local filesystems, which is where a library lives.
+        reliable on local filesystems, which is where a library lives;
+        fcntl is POSIX-only, matching the macOS target. The empty
+        `.manifest.lock` file stays in the track dir; nothing enumerates or
+        hashes track-dir contents (only manifest.json and named documents).
         """
         with self._manifest_lock(track_id):
             manifest = self.read_manifest(track_id)

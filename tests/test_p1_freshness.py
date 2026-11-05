@@ -74,3 +74,69 @@ def test_mark_dependents_stale_is_transitive_and_ok_only():
     assert m.documents.video.status == "not_applicable"
     assert m.documents.source.status == "ok"
     assert mark_dependents_stale(m, "stems") == []  # idempotent
+
+
+def test_stale_features_are_refused_by_lyrics(tmp_path):
+    # H3: a stale prerequisite is refused (exit 2), not consumed.
+    mix = _click_track(4.0)
+    library = tmp_path / "lib"
+    track_id = _fabricate_track(library, mix, {"drums": mix, "vocals": mix}, tmp_path)
+    lib = ["--library", str(library)]
+    assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
+    mpath = library / track_id / "manifest.json"
+    m = json.loads(mpath.read_text())
+    m["documents"]["audio_features"]["status"] = "stale"
+    mpath.write_text(json.dumps(m))
+    result = runner.invoke(app, ["lyrics", track_id, *lib])
+    assert result.exit_code == 2
+    assert "stale" in result.output and "mrw features" in result.output
+
+
+def test_stale_features_rerun_instead_of_noop(tmp_path):
+    mix = _click_track(4.0)
+    library = tmp_path / "lib"
+    track_id = _fabricate_track(library, mix, {"drums": mix}, tmp_path)
+    lib = ["--library", str(library)]
+    assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
+    mpath = library / track_id / "manifest.json"
+    m = json.loads(mpath.read_text())
+    m["documents"]["audio_features"]["status"] = "stale"
+    mpath.write_text(json.dumps(m))
+    result = runner.invoke(app, ["features", track_id, *lib])
+    assert result.exit_code == 0 and "no-op" not in result.output
+    assert _doc_status(library, track_id, "audio_features") == "ok"
+
+
+def test_successful_stems_run_marks_features_and_lyrics_stale(tmp_path, monkeypatch):
+    import mrw.stems
+    from test_m2_field_fixes import _fake_stems, _ingest, _make_wav
+
+    wav = tmp_path / "t.wav"
+    _make_wav(wav)
+    library = tmp_path / "lib"
+    track_id = _ingest(wav, library)
+    monkeypatch.setattr(mrw.stems, "_separate",
+                        lambda flac, out_dir, model, device, cpu_threads=1: _fake_stems(out_dir))
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[stems]\ndevice = "cpu"\n')
+    lib = ["--library", str(library), "--config", str(cfg)]
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
+    assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
+    _ok_lyrics(library, track_id)
+    # Re-separate under a new config (e.g. another model/thread count).
+    cfg.write_text('[stems]\ndevice = "cpu"\ncpu_threads = 2\n')
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
+    assert _doc_status(library, track_id, "audio_features") == "stale"
+    assert _doc_status(library, track_id, "lyrics") == "stale"
+
+
+def test_lyrics_and_video_records_stale_structure():
+    ok = {"status": "ok", "path": "x.json"}
+    for stage in ("lyrics", "video"):
+        m = Manifest.model_validate({
+            "track_id": "0" * 16, "title": "t", "has_video": True,
+            "created_at": "2026-01-01T00:00:00Z",
+            "documents": {"source": ok, "audio_features": ok, "lyrics": ok,
+                          "video": ok, "structure": ok}})
+        assert mark_dependents_stale(m, stage) == ["structure"]
+        assert m.documents.audio_features.status == "ok"
