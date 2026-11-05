@@ -16,6 +16,38 @@ from . import canonical, hashing
 from .models import Manifest, doc_dump
 
 
+# Which documents consume each upstream artifact (PLAN §3 stage graph).
+# structure (M6) consumes features, lyrics and video.
+DEPENDENTS: dict[str, tuple[str, ...]] = {
+    "stems": ("audio_features", "lyrics"),
+    "audio_features": ("lyrics", "structure"),
+    "lyrics": ("structure",),
+    "video": ("structure",),
+}
+
+
+def mark_dependents_stale(manifest: Manifest, stage: str) -> list[str]:
+    """After `stage` produced new output, flip every `ok` document derived
+    from it (transitively) to `stale`, in the same manifest write.
+
+    Freshness used to be keyed on each stage's own config only, so
+    re-running stems or features left lyrics.json "up to date" although it
+    was computed from inputs that no longer exist (DET-1). A stale entry
+    fails its stage's no-op check (so it re-runs) and is refused as a
+    prerequisite downstream (H3). Returns the names flipped.
+    """
+    flipped: list[str] = []
+    queue = list(DEPENDENTS.get(stage, ()))
+    while queue:
+        name = queue.pop(0)
+        entry = getattr(manifest.documents, name)
+        if entry.status == "ok":
+            setattr(manifest.documents, name, entry.model_copy(update={"status": "stale"}))
+            flipped.append(name)
+            queue.extend(DEPENDENTS.get(name, ()))
+    return flipped
+
+
 class PrerequisiteError(RuntimeError):
     """Bad invocation / missing prerequisites — nothing recorded; exit 2."""
 

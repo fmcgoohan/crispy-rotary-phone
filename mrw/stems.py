@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import TOOL_VERSION, config, versions
-from .library import Library, PrerequisiteError
+from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import RunMetadata, StemsState
 
 STEM_NAMES = ("vocals", "drums", "bass", "other")
@@ -172,6 +172,9 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
 
     def _record(state: StemsState) -> None:
         manifest.stems = state
+        if state.status == "ok":
+            # No stems digest yet: any fresh separation invalidates consumers.
+            mark_dependents_stale(manifest, "stems")
         library.write_manifest(track_id, manifest)
 
     try:

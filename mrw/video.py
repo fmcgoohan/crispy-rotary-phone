@@ -30,7 +30,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, costs, hashing, versions
-from .library import Library, PrerequisiteError
+from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     ApiUsage,
     CaptionBackendInfo,
@@ -401,6 +401,8 @@ def run_video(
 
     def _record(entry: DocumentEntry) -> None:
         manifest.documents.video = entry
+        if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+            mark_dependents_stale(manifest, "video")
         library.write_manifest(track_id, manifest)
 
     def _accrued_usage(estimated: costs.CostEstimate | None):
