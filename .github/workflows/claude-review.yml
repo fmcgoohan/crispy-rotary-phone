@@ -15,13 +15,14 @@ jobs:
     # red; outside contributions get manual review (review 004, A-1).
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     # A new push cancels the in-flight review (review 004, A-3).
     concurrency:
       group: pr-review-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     permissions:
       contents: read
+      checks: read  # `gh pr checks` reports the Tests workflow
       # A-2: if the `gh pr comment` summary 403s on first run, add
       # `issues: write` here (kept off preemptively for least privilege).
       pull-requests: write
@@ -30,29 +31,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install ffmpeg + espeak-ng (required by the smoke tests)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      # M2: keep the slow Demucs tests in review (the CPU double-run IS the
-      # neural-path determinism evidence) but cache the weights so it's
-      # affordable. Key on the model name; bump when stems.model changes.
-      - name: Cache Demucs model weights
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/torch/hub/checkpoints
-          key: demucs-htdemucs
-
-      - name: Cache Whisper model weights (M4)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface/hub
-          key: whisper-small
 
       - uses: anthropics/claude-code-action@v1
         with:
@@ -67,8 +45,10 @@ jobs:
             1. Read docs/reviews/CHECKLIST.md and CLAUDE.md, then review the
                PR diff against them (`gh pr diff` for the diff; read full
                files for context as needed).
-            2. Run the test suite: `uv sync`, then `uv run pytest -q`.
-               Report the exact result in your summary.
+            2. Do NOT run the tests: the separate "Tests" workflow
+               (tests.yml: `fast` and `slow` jobs) is the merge gate. Run
+               `gh pr checks <PR NUMBER>` once and report what it shows for
+               those jobs (passed / failed / still running) in your summary.
             3. Post findings as inline comments using
                `mcp__github_inline_comment__create_inline_comment` (with
                `confirmed: true`). Each finding states a severity —
@@ -88,4 +68,4 @@ jobs:
             Only post GitHub comments — don't submit review text as messages.
           claude_args: |
             --max-turns 50
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(uv sync:*),Bash(uv run:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*)"
