@@ -6,7 +6,7 @@
   the rounded rms series (FEAT-13).
 - Beat grid trimmed (no beats in beatless pads) and tempo.confidence measures
   onset support (FEAT-3).
-- A digitally silent mix fails the stage (DET-11/SCH-9); sub-400 ms input
+- A silent mix (rms at the floor throughout, dither included) fails the stage (DET-11/SCH-9); sub-400 ms input
   is measured as one loudness block (FEAT-8).
 
 Generated fixtures only (T3).
@@ -252,8 +252,16 @@ def test_no_beats_inside_beatless_pads() -> None:
 # --- (c) degenerate inputs ------------------------------------------------------------
 
 
-def test_silent_mix_fails_stage_and_keeps_prior_document(tmp_path: Path) -> None:
-    silence = np.zeros(4 * SAMPLE_RATE, dtype=np.float32)
+@pytest.mark.parametrize(
+    "make",
+    [lambda: np.zeros(4 * SAMPLE_RATE, dtype=np.float32), lambda: _dither(20.0)],
+    ids=["digital_silence", "dither_1lsb"],
+)
+def test_silent_mix_fails_stage_and_keeps_prior_document(tmp_path: Path, make) -> None:
+    # Review D-2: ±1 LSB dither has a non-zero onset envelope (beat_track
+    # alone would invent ~125 BPM) but its published rms is -80.0 throughout,
+    # so by the document's own silence rule it is silent and must fail.
+    silence = make()
     library = tmp_path / "lib"
     track_id = _fabricate_track(library, silence, {}, tmp_path)
     # A prior document from an older config: the failed re-run must not touch it.
@@ -272,6 +280,7 @@ def test_silent_mix_fails_stage_and_keeps_prior_document(tmp_path: Path) -> None
     entry = json.loads(mpath.read_text())["documents"]["audio_features"]
     assert entry["status"] == "failed"
     assert "no beat evidence in mix" in entry["error"]
+    assert "-80 dB floor" in entry["error"]  # the rms rule, not the tracker
     assert prior.read_text() == '{"prior": true}\n'
 
 

@@ -7,8 +7,9 @@ Reviewed conventions implemented here:
   no beats through beatless intros/outros); tempo.confidence is the beats'
   onset support against off-beat probes at k/7 of a beat (FEAT-3,
   _beat_confidence).
-  A mix with no beat evidence (digital silence, no beats tracked) fails the
-  stage rather than writing bpm_global 0.0 (DET-11/SCH-9, H3).
+  A mix with no beat evidence (mix rms at the floor throughout, no beats
+  tracked) fails the stage rather than writing bpm_global 0.0
+  (DET-11/SCH-9, H3; review D-2).
 - Downbeats via
   `assumed_4_4_phase_fit` (OQ-4) — the beat phase (0..3) maximizing mean
   onset strength, ties to the lowest phase.
@@ -455,15 +456,25 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
 
     try:
         mix_mono, mix_stereo = _load(track_dir / "source_audio.flac")
+        # The mix goes first: its rounded rms series is the reference for
+        # the stems' relative onset gate (FEAT-1) and for the silence check
+        # below. D3: the configured gate passes through the precision
+        # contract and the ROUNDED value both drives the gate and is
+        # embedded in each stem's onsets.gate.
+        mix_channel, mix_rms = _channel_features(mix_mono)
+        if _at_floor(mix_rms).all():
+            # Review D-2: the document's own silence rule (published rms at
+            # the floor throughout → R-9 sentinel onsets, zero centroid) must
+            # also deny a beat grid. Dither of ±1 LSB has a non-zero onset
+            # envelope and beat_track would invent ~125 BPM over it.
+            raise FeaturesError(
+                "no beat evidence in mix (mix rms_db at the -80 dB floor "
+                "throughout: silent); no beat grid can be written"
+            )
         # The mix onset envelope is computed here (beat grid) and again in
         # _channel_features (mix onsets) — deliberate: sharing it would
         # couple the two code paths for a sub-second saving per track.
         tempo, beats = _beats_and_tempo(mix_mono, cfg.features.phase_fit_window_seconds)
-        # The mix goes first: its rounded rms series is the reference for
-        # the stems' relative onset gate (FEAT-1). D3: the configured gate
-        # passes through the precision contract and the ROUNDED value both
-        # drives the gate and is embedded in each stem's onsets.gate.
-        mix_channel, mix_rms = _channel_features(mix_mono)
         relative_db = canonical.round_db(cfg.features.onset_gate_relative_db)
         stem_channels: dict[str, ChannelFeatures] = {}
         vocal_rms = None

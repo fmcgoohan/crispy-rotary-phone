@@ -58,7 +58,9 @@ strength (formula in the schema). A first draft probed only 1/3 and 2/3 of
 a beat, which sit exactly on triplet hats and scored correctly-tracked
 shuffles and 12/8 as beatless (review D-1); the 1/7 points miss every
 common subdivision, leaving septuplets as the blind spot. It cannot detect
-half/double-tempo errors. A mix with no beat evidence fails
+half/double-tempo errors. A mix with no beat evidence (published mix rms at
+the −80 dB floor throughout — dither counts, review D-2 — or no beats
+tracked) fails
 the features stage (exit 1, manifest failed) so bpm_global keeps its
 exclusiveMinimum 0 promise; the alternative of relaxing it to 0.0 was
 rejected as a consumer-breaking change. Onsets are level-gated relative to

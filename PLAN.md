@@ -200,7 +200,8 @@ vocal stem only.
   confidence measures onset support for the beats against off-beat probes at
   k/7 of a beat, which miss 8th, triplet, 16th, quintuplet and sextuplet
   subdivisions (formula in the schema; blind to half/double tempo). A mix
-  with no beat evidence fails the stage rather than writing a 0 BPM grid.
+  with no beat evidence (rms at the floor throughout, or no beats tracked)
+  fails the stage rather than writing a 0 BPM grid.
   **Downbeats**: v1 estimates them by assuming 4/4 and choosing the beat phase
   (0–3) that maximizes mean onset strength — recorded with
   `"method": "assumed_4_4_phase_fit"` so consumers know it is an estimate.

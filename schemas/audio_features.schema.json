@@ -16,7 +16,7 @@
         "bpm_global": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here. Always > 0: a mix with no beat evidence (digital silence, or no beats tracked) fails the features stage (manifest status failed) instead of writing a document, so consumers may divide by this value."
+          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here. Always > 0: a mix with no beat evidence (silent: mix rms_db at the -80 dB floor in every frame, dither included; or no beats tracked) fails the features stage (manifest status failed) instead of writing a document, so consumers may divide by this value."
         },
         "confidence": {
           "$ref": "common.schema.json#/$defs/confidence",
