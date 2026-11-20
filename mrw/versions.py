@@ -32,7 +32,8 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     #    mm:ss:xx) and BOM/UTF-16/cp1252-aware decoding (LYR-5/7, SEC-7).
     # 3: a markup line with several leading time tags yields one markup
     #    entry per tag (was first tag only).
-    "lyrics": 3,
+    # 4: supplied_markup is in hint order whenever every entry has a hint.
+    "lyrics": 4,
     # 2: palette clustered from per-frame downscaled pixels (was averages
     #    of whole image rows — VID-1); rotation-aware frame geometry
     #    (portrait phone video decoded scrambled — VID-4).
