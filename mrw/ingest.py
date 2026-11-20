@@ -330,9 +330,23 @@ def _regenerate_flac(media_path: Path, track_dir: Path, source_doc: dict) -> Non
     sr, ch = na["sample_rate"], na["channels"]
     dest = track_dir / na["path"]
     tmp = track_dir / ".source_audio.tmp.flac"
+    # Decode the same audio stream the original ingest chose (recorded in
+    # source.json since source 1.1.0); an older track with no record is
+    # unambiguous only when the file has exactly one audio stream.
+    stream_index = (source_doc.get("media") or {}).get("audio", {}).get("stream_index")
+    if stream_index is None:
+        stream, count = select_audio_stream(probe(media_path).get("streams", []))
+        if stream is None or count != 1:
+            raise IngestError(
+                f"{media_path.name} has {count} audio streams and this track "
+                "predates recording which one was ingested — remove the track "
+                "directory and ingest again"
+            )
+        stream_index = int(stream["index"])
     try:
-        _normalize_audio(media_path, tmp, sr, ch)
-        stream_sha, _ = _decode_hash_and_duration(tmp, sr, ch)
+        _normalize_audio(media_path, tmp, sr, ch, int(stream_index))
+        # tmp is a single-stream FLAC: its only audio stream is index 0.
+        stream_sha, _ = _decode_hash_and_duration(tmp, sr, ch, 0)
         if stream_sha != na["audio_stream_sha256"]:
             raise IngestError(
                 f"regenerated {dest.name} does not match the recorded audio "
