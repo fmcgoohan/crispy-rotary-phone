@@ -149,6 +149,7 @@ def test_compressed_markup_line_marks_every_occurrence():
 
 
 def test_pinned_revision_reaches_download_model(tmp_path, monkeypatch):
+    faster_whisper = pytest.importorskip("faster_whisper.utils")  # T5: neural dep
     import faster_whisper.utils
 
     from mrw.lyrics import fetch_whisper_model, resolve_whisper_model
@@ -170,6 +171,7 @@ def test_pinned_revision_reaches_download_model(tmp_path, monkeypatch):
 
 
 def test_local_model_directory_is_used_as_is(tmp_path, monkeypatch):
+    faster_whisper = pytest.importorskip("faster_whisper.utils")  # T5: neural dep
     import faster_whisper.utils
 
     from mrw.lyrics import fetch_whisper_model, resolve_whisper_model
