@@ -398,7 +398,12 @@ def uncovered_spans(
     instead of testing regions whole.
     """
     merged: list[list[float]] = []
-    for s, e in sorted(word_spans):
+    # CRIT-5: a zero-length span (a word Whisper timed start == end, or one
+    # clamped to (duration, duration)) covers nothing, but it would still
+    # split a region's gaps and defeat the whole-region test below — so a
+    # short region holding only such a word vanished from the ledger.
+    # Drop them before merging; coverage is unchanged (they add 0 s).
+    for s, e in sorted(sp for sp in word_spans if sp[1] > sp[0]):
         if merged and s <= merged[-1][1]:
             merged[-1][1] = max(merged[-1][1], e)
         else:

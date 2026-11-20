@@ -249,6 +249,22 @@ def test_uncovered_spans_localize_partial_misses() -> None:
     assert uncovered_spans([(10.0, 39.5)], [(10.0, 40.0)], 1.0) == []
 
 
+def test_uncovered_spans_ignore_zero_length_words() -> None:
+    # CRIT-5: a zero-length word covers nothing, so a short region holding
+    # only that word is still a zero-coverage region and is emitted whole.
+    from mrw.lyrics import uncovered_spans
+
+    # Interior zero-length word (Whisper can time start == end).
+    assert uncovered_spans([(10.7, 10.7)], [(10.0, 11.5)], 1.0) == [(10.0, 11.5)]
+    # Word clamped to (duration, duration) inside a region that runs to the
+    # end of a 15.0 s track.
+    assert uncovered_spans([(15.0, 15.0)], [(14.6, 15.0)], 1.0) == [(14.6, 15.0)]
+    # Mixed with a real word: only the real word splits the region.
+    assert uncovered_spans(
+        [(10.2, 10.2), (20.0, 30.0)], [(10.0, 40.0)], 1.0
+    ) == [(10.0, 20.0), (30.0, 40.0)]
+
+
 def test_clips_from_regions_pad_and_merge() -> None:
     from mrw.lyrics import clips_from_regions
 
