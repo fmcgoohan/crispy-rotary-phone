@@ -15,7 +15,8 @@ from pydantic import BaseModel
 # constant across documents — schemas evolve independently).
 SOURCE_SCHEMA_VERSION = "1.0.0"
 # audio_features 1.1.0: additive — optional `gate` on onsets (FEAT-1 level
-# gate, S4).
+# gate, S4); tempo.confidence redefined as onset support (FEAT-3; same
+# field, same range, description updated).
 AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).

@@ -3,7 +3,10 @@ schemas/audio_features.schema.json v1.1.0.
 
 Reviewed conventions implemented here:
 - 10 ms hop (100 Hz grid), analysis window 2048 (PLAN §4.3).
-- Tempo/beat grid computed once on the mix; downbeats via
+- Tempo/beat grid computed once on the mix (librosa beat_track, trim=True:
+  no beats through beatless intros/outros); tempo.confidence is the beats'
+  onset support against 1/3- and 2/3-beat probes (FEAT-3, _beat_confidence).
+- Downbeats via
   `assumed_4_4_phase_fit` (OQ-4) — the beat phase (0..3) maximizing mean
   onset strength, ties to the lowest phase.
 - rms_db: dBFS, silence floor clamped at -80.0, rounded BEFORE any silence
@@ -71,6 +74,11 @@ HOP = 441  # 10 ms at 44.1 kHz — the 100 Hz uniform grid (PLAN §4.3)
 HOP_SECONDS = 0.01
 N_FFT = 2048
 SILENCE_FLOOR_DB = -80.0
+# tempo.confidence probe half-window (FEAT-3): estimator-structural and
+# stated in the schema's confidence formula, so it rides the algorithm
+# version rather than config (confidence is advisory — the same review 006
+# F-1 audit call as the old CV multiplier).
+BEAT_SALIENCE_WINDOW_SECONDS = 0.03
 
 
 class FeaturesError(RuntimeError):
@@ -206,28 +214,62 @@ def _channel_features(y, mix_rms_db=None, relative_db: Optional[float] = None):
     return features, rms
 
 
+def _pool(env, frame: int, w: int) -> float:
+    frame = min(max(int(frame), 0), len(env) - 1)
+    return float(env[max(0, frame - w) : frame + w + 1].max())
+
+
+def _beat_confidence(env, beat_frames) -> float:
+    """Onset support for the beat grid (FEAT-3) — see the schema description.
+
+    For beat i at frame b_i with local period p_i (the following inter-beat
+    interval; the last beat reuses the previous one): on_i is the envelope
+    max within ±BEAT_SALIENCE_WINDOW of b_i, off_i is the SMALLER of the
+    same pooled value at b_i + p_i/3 and b_i + 2p_i/3. The 1/3 and 2/3 probes
+    avoid the half-beat (straight 8ths would read as beatless) and taking the
+    smaller one tolerates a swung 8th on the 2/3 probe. confidence =
+    mean_i clip((on_i - off_i) / ref, 0, 1) with ref = p90 of on_i, so beats
+    placed over nothing count 0 and beats stronger than their off-beat probes
+    count up to 1. Beatless audio (drone, noise) has on ≈ off → ~0.1; a
+    click track → ~0.9. Half/double-tempo errors are not detected: a grid at
+    half the true tempo still sits on onsets.
+    """
+    import numpy as np
+
+    if len(beat_frames) < 2:
+        return 0.0
+    w = max(1, int(round(BEAT_SALIENCE_WINDOW_SECONDS / HOP_SECONDS)))
+    frames = np.asarray(beat_frames, dtype=np.int64)
+    periods = np.diff(frames)
+    periods = np.append(periods, periods[-1])
+    on = np.array([_pool(env, f, w) for f in frames])
+    off = np.array(
+        [
+            min(_pool(env, f + round(p / 3), w), _pool(env, f + round(2 * p / 3), w))
+            for f, p in zip(frames, periods)
+        ]
+    )
+    ref = float(np.percentile(on, 90))
+    if ref <= 0.0:
+        return 0.0
+    return float(np.clip((on - off) / ref, 0.0, 1.0).mean())
+
+
 def _beats_and_tempo(y_mix, phase_fit_window_seconds: float) -> tuple[Tempo, Beats]:
     import librosa
     import numpy as np
 
     env = librosa.onset.onset_strength(y=y_mix, sr=SAMPLE_RATE, hop_length=HOP)
+    # trim=True (librosa's default): beats over weak leading/trailing onset
+    # strength are dropped, so beatless intros and outros carry no invented
+    # grid (FEAT-3). Interior breakdowns are not trimmed — confidence (and a
+    # consumer reading onsets) is what reveals those.
     bpm, beat_frames = librosa.beat.beat_track(
-        onset_envelope=env, sr=SAMPLE_RATE, hop_length=HOP, trim=False
+        onset_envelope=env, sr=SAMPLE_RATE, hop_length=HOP, trim=True
     )
     bpm = float(np.atleast_1d(bpm)[0])
     beat_times = librosa.frames_to_time(beat_frames, sr=SAMPLE_RATE, hop_length=HOP)
-
-    # Confidence heuristic: regularity of inter-beat intervals (coefficient
-    # of variation). A metronomic grid scores ~1.0; an erratic one → 0.
-    # The 4.0 multiplier is estimator-structural (rides tool_version, not
-    # config): confidence is advisory, not reinterpretable (review 006 F-1
-    # audit).
-    if len(beat_times) >= 3:
-        intervals = np.diff(beat_times)
-        cv = float(intervals.std() / max(intervals.mean(), 1e-9))
-        confidence = max(0.0, min(1.0, 1.0 - 4.0 * cv))
-    else:
-        confidence = 0.0
+    confidence = _beat_confidence(env, beat_frames)
 
     # OQ-4: assumed-4/4 phase fit — pick the beat phase whose every-4th
     # beats have the highest mean onset strength; ties take the lowest phase

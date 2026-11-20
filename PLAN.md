@@ -196,6 +196,9 @@ vocal stem only.
   transient signal anyway). Analysis FFTs use window 2048 / hop 441.
 - **Tempo & beat grid**: `librosa.beat.beat_track` on the mix (onset-strength
   based), emitting sorted beat times plus a global BPM and a confidence score.
+  The grid is trimmed (no beats through beatless intros/outros) and the
+  confidence measures onset support for the beats against 1/3- and 2/3-beat
+  probes (formula in the schema; blind to half/double tempo).
   **Downbeats**: v1 estimates them by assuming 4/4 and choosing the beat phase
   (0–3) that maximizes mean onset strength — recorded with
   `"method": "assumed_4_4_phase_fit"` so consumers know it is an estimate.

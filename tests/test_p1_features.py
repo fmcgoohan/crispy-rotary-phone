@@ -183,3 +183,36 @@ def test_silence_decisions_use_rounded_rms() -> None:
     assert list(rms) == channel.rms_db.values
     assert all(v == 0.0 for v in channel.spectral_centroid_hz.values)
     assert channel.onsets.times == [] and channel.onsets.strength_reference == 1.0
+
+
+# --- (b) beat grid: trim + onset-support confidence ---------------------------------
+
+
+def test_click_track_confidence_high_and_bpm_unchanged() -> None:
+    tempo, beats = features._beats_and_tempo(_q16(_click_track(20.0)), WINDOW)
+    assert tempo.bpm_global == 120.0
+    assert tempo.confidence >= 0.8
+
+
+def test_straight_eighths_are_not_read_as_beatless() -> None:
+    # The reason the probes sit at 1/3 and 2/3 of a beat, not the half beat.
+    y = _clicks(20.0, 0.5, 0.6) + _clicks(20.0, 0.25, 0.3)
+    tempo, _ = features._beats_and_tempo(_q16(y), WINDOW)
+    assert tempo.bpm_global == 120.0
+    assert tempo.confidence >= 0.8
+
+
+@pytest.mark.parametrize("make", [_drone, _pink], ids=["drone", "pink_noise"])
+def test_beatless_mix_confidence_low(make) -> None:
+    tempo, _ = features._beats_and_tempo(_q16(make(20.0)), WINDOW)
+    assert tempo.confidence < 0.5
+
+
+def test_no_beats_inside_beatless_pads() -> None:
+    # 12 s pad | 16 s of 120 BPM clicks over the pad | 12 s pad.
+    y = np.concatenate([_pad(12.0), _click_track(16.0) + _pad(16.0), _pad(12.0)])
+    tempo, beats = features._beats_and_tempo(_q16(y), WINDOW)
+    times = np.array(beats.times)
+    assert len(times) >= 25
+    assert times.min() >= 12.0 - 0.05 and times.max() <= 28.0 + 0.05
+    assert tempo.confidence >= 0.8
