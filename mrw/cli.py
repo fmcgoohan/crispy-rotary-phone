@@ -93,11 +93,20 @@ def ingest(
         None, "--lyrics", help="Optional lyrics file (.lrc or .txt)."
     ),
     title: Optional[str] = typer.Option(None, "--title", help="Display title override."),
+    update: bool = typer.Option(
+        False,
+        "--update",
+        help="For an already-ingested track: register new --lyrics (resets "
+        "lyrics/structure to pending), apply --title, make the "
+        "ingest.copy_video copy, record this path as the original, and "
+        "regenerate a missing source_audio.flac. Other documents are "
+        "left untouched.",
+    ),
     library: Path = _LIBRARY_OPT,
     config_path: Optional[Path] = _CONFIG_OPT,
 ) -> None:
     """Register a track: probe, hash, normalize audio, write source.json."""
-    from .ingest import IngestError, ingest as run_ingest
+    from .ingest import LYRICS_SUFFIXES, IngestError, ingest as run_ingest
 
     if not media.is_file():
         typer.echo(f"error: no such file: {media}", err=True)
@@ -105,18 +114,42 @@ def ingest(
     if lyrics is not None and not lyrics.is_file():
         typer.echo(f"error: no such lyrics file: {lyrics}", err=True)
         raise typer.Exit(2)
+    if lyrics is not None and lyrics.suffix.lower() not in LYRICS_SUFFIXES:
+        # LYR-13: anything else (.srt, .docx, ...) used to be parsed as txt.
+        typer.echo(
+            f"error: --lyrics must be a .lrc or .txt file, got {lyrics.name}",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     cfg = _load_config(config_path)
     try:
         result = run_ingest(
-            media, Library(library), cfg, lyrics_path=lyrics, title=title
+            media, Library(library), cfg, lyrics_path=lyrics, title=title,
+            update=update,
         )
     except IngestError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(1)
 
-    if result.already_ingested:
+    if result.already_ingested and update:
+        if result.updated:
+            typer.echo(
+                f"updated {result.track_id} ({result.title}): "
+                + "; ".join(result.updated)
+            )
+        else:
+            typer.echo(
+                f"already ingested: {result.track_id} ({result.title}) "
+                "— nothing to update"
+            )
+    elif result.already_ingested:
         typer.echo(f"already ingested: {result.track_id} ({result.title}) — no-op")
+        for item in result.ignored:
+            typer.echo(
+                f"warning: ignored {item} — re-run with --update to apply",
+                err=True,
+            )
     else:
         kind = "video" if result.has_video else "audio"
         typer.echo(f"ingested {result.track_id} ({result.title}) [{kind}]")

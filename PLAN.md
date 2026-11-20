@@ -143,8 +143,16 @@ serialization, so there is exactly one code path that writes JSON.
 - **Original video is referenced, not copied**, by default; config
   `ingest.copy_video: true` copies it into the track dir for a fully
   self-contained library at the cost of size (review 001, R-7). Without the
-  copy, video re-analysis fails loudly if the original path has gone stale.
-- **Lyrics file** (optional): copied verbatim into the track dir as
+  copy, video re-analysis fails loudly if the original path has gone stale,
+  and refuses (exit 2) a file whose sha256 is not the ingested one.
+  `mrw ingest <new path> --update` relinks a moved original and, with
+  `copy_video` now true, makes the (atomic, hash-verified) copy.
+- **Re-ingest**: a plain re-ingest of a registered file is a no-op that names
+  every option it ignored; `--update` registers new lyrics (resetting lyrics
+  and structure to pending), applies `--title`, makes the video copy,
+  records the given path as the original, and regenerates a missing
+  `source_audio.flac` — never touching other stages' documents.
+- **Lyrics file** (optional, `.lrc` or `.txt` only — anything else is exit 2): copied verbatim into the track dir as
   `lyrics_input.lrc` / `lyrics_input.txt`, hashed, and registered in
   `source.json`. `.lrc` timestamps are treated as *hints*, not truth (they are
   frequently offset); alignment still runs against audio.
@@ -457,7 +465,9 @@ the same file at the same location (review 003, F-1). Enforced in layers:
   untranscribed vocal regions) lives *in the document* as flags/fields;
   logs are for humans debugging, documents are the API.
 - **Exit codes**: 0 success, 1 stage failure, 2 bad invocation/missing
-  prerequisites. Batch mode (`mrw analyze --all`) continues past per-track
+  prerequisites (including "stage already running for this track"),
+  130 interrupted (Ctrl-C, SIGTERM, SIGHUP — the running stage is recorded
+  as failed with any partial API spend). Batch mode (`mrw analyze --all`) continues past per-track
   failures and summarizes.
 
 ## 9. Performance & MPS notes (4-minute track, M-series)

@@ -2,7 +2,8 @@
 
 source.json is a pure function of (input file bytes, ingest config); all run
 metadata goes to manifest.json. Re-ingesting an already-registered file is a
-no-op.
+no-op (the M0 contract) that names every option it ignored; `--update`
+applies them to the existing track (ORCH-6/ARCH-9/DET-4/VID-10/LYR-13).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
@@ -42,12 +43,19 @@ class IngestError(RuntimeError):
     pass
 
 
+LYRICS_SUFFIXES = (".lrc", ".txt")
+
+
 @dataclass
 class IngestResult:
     track_id: str
     title: str
     has_video: bool
     already_ingested: bool
+    # Re-ingest of a registered track: options a plain re-ingest ignored,
+    # and what --update changed.
+    ignored: list[str] = field(default_factory=list)
+    updated: list[str] = field(default_factory=list)
 
 
 # ffprobe only reads headers; anything slower than this is a hung process
@@ -202,13 +210,181 @@ def copy_video_atomic(media_path: Path, track_dir: Path, expected_sha: str) -> P
     return dest
 
 
+def _read_source(track_dir: Path) -> dict | None:
+    import json
+
+    try:
+        return json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _verified_copy_exists(track_dir: Path, source_doc: dict) -> bool:
+    """Same test as the video stage's _resolve_video_path (size match);
+    the stage then verifies the bytes."""
+    size = source_doc["file"]["size_bytes"]
+    return any(
+        p.is_file() and p.stat().st_size == size
+        for p in track_dir.glob("source_video.*")
+    )
+
+
+def _lyrics_changed(lyrics_path: Path | None, source_doc: dict | None) -> bool:
+    if lyrics_path is None:
+        return False
+    registered = ((source_doc or {}).get("lyrics_input") or {}).get("sha256")
+    return hashing.sha256_file(lyrics_path) != registered
+
+
+def _ignored_options(
+    existing: Manifest,
+    track_dir: Path,
+    cfg: config.Config,
+    lyrics_path: Path | None,
+    title: str | None,
+) -> list[str]:
+    """What a plain re-ingest would leave unapplied — reported, never
+    silently dropped (H1)."""
+    source_doc = _read_source(track_dir)
+    ignored: list[str] = []
+    if _lyrics_changed(lyrics_path, source_doc):
+        registered = (source_doc or {}).get("lyrics_input")
+        ignored.append(
+            f"--lyrics {lyrics_path} ("
+            + ("differs from the registered lyrics" if registered
+               else "no lyrics are registered")
+            + ")"
+        )
+    if title is not None and title != existing.title:
+        ignored.append(f"--title {title!r} (current title {existing.title!r})")
+    if (
+        existing.has_video
+        and cfg.ingest.copy_video
+        and source_doc is not None
+        and not _verified_copy_exists(track_dir, source_doc)
+    ):
+        ignored.append("ingest.copy_video = true (no copy in the library yet)")
+    if not (track_dir / "source_audio.flac").is_file():
+        ignored.append("missing source_audio.flac (would be regenerated)")
+    return ignored
+
+
+def _regenerate_flac(media_path: Path, track_dir: Path, source_doc: dict) -> None:
+    """Rebuild a deleted source_audio.flac and prove it is the same audio:
+    its decoded PCM must hash to the recorded audio_stream_sha256."""
+    na = source_doc["normalized_audio"]
+    sr, ch = na["sample_rate"], na["channels"]
+    dest = track_dir / na["path"]
+    tmp = track_dir / ".source_audio.tmp.flac"
+    try:
+        _normalize_audio(media_path, tmp, sr, ch)
+        stream_sha, _ = _decode_hash_and_duration(tmp, sr, ch)
+        if stream_sha != na["audio_stream_sha256"]:
+            raise IngestError(
+                f"regenerated {dest.name} does not match the recorded audio "
+                "stream hash (different ffmpeg build?) — not replaced"
+            )
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _update_existing(
+    existing: Manifest,
+    media_path: Path,
+    file_sha: str,
+    library: Library,
+    cfg: config.Config,
+    lyrics_path: Path | None,
+    title: str | None,
+) -> IngestResult:
+    """`mrw ingest --update`: apply new inputs to a registered track.
+
+    Touches only ingest's own artifacts (source.json, lyrics_input.*,
+    source_audio.flac, source_video.*) and the manifest's title and source
+    entry; a newly registered lyrics file resets lyrics and structure to
+    pending (the mode or the text changed). No other stage's document or
+    entry is modified. media_path hashes to the track by construction, so
+    recording it as original_path relinks a moved original without
+    cascading (inputs_sha256 excludes paths).
+    """
+    track_id = existing.track_id
+    track_dir = library.track_dir(track_id)
+    source_doc = _read_source(track_dir)
+    if source_doc is None:
+        raise IngestError(
+            f"track {track_id}: source.json is missing or unreadable — "
+            "the track cannot be updated in place"
+        )
+    updated: list[str] = []
+
+    if not (track_dir / source_doc["normalized_audio"]["path"]).is_file():
+        _regenerate_flac(media_path, track_dir, source_doc)
+        updated.append("regenerated source_audio.flac")
+
+    lyrics_changed = _lyrics_changed(lyrics_path, source_doc)
+    if lyrics_changed:
+        assert lyrics_path is not None
+        old = source_doc.get("lyrics_input")
+        new = _lyrics_input(lyrics_path, track_dir)
+        if old and old["path"] != new.path:
+            (track_dir / old["path"]).unlink(missing_ok=True)
+        source_doc["lyrics_input"] = new.model_dump(mode="json")
+        updated.append(f"registered lyrics {lyrics_path.name} ({new.format})")
+
+    if (
+        existing.has_video
+        and cfg.ingest.copy_video
+        and not _verified_copy_exists(track_dir, source_doc)
+    ):
+        copy_video_atomic(media_path, track_dir, file_sha)
+        updated.append("copied the video into the library")
+
+    if source_doc["file"]["original_path"] != str(media_path):
+        source_doc["file"]["original_path"] = str(media_path)
+        source_doc["file"]["filename"] = media_path.name
+        updated.append(f"original_path -> {media_path}")
+
+    source = SourceDocument.model_validate(source_doc)
+    source_sha = library.write_document(track_id, "source.json", source)
+    ingest_hash = config.stage_hash(cfg.ingest)
+    new_title = title if title is not None and title != existing.title else None
+    if new_title is not None:
+        updated.append(f"title -> {new_title!r}")
+    if existing.documents.source.config_hash != ingest_hash:
+        updated.append("source config_hash -> current ingest config")
+
+    def apply(m: Manifest) -> None:
+        if new_title is not None:
+            m.title = new_title
+        m.documents.source = m.documents.source.model_copy(
+            update={"content_sha256": source_sha, "config_hash": ingest_hash}
+        )
+        if lyrics_changed:
+            m.documents.lyrics = DocumentEntry(status="pending")
+            m.documents.structure = DocumentEntry(status="pending")
+
+    manifest = library.update_manifest(track_id, apply)
+    return IngestResult(
+        track_id=track_id,
+        title=manifest.title,
+        has_video=manifest.has_video,
+        already_ingested=True,
+        updated=updated,
+    )
+
+
 def ingest(
     media_path: Path,
     library: Library,
     cfg: config.Config,
     lyrics_path: Path | None = None,
     title: str | None = None,
+    update: bool = False,
 ) -> IngestResult:
+    if lyrics_path is not None and lyrics_path.suffix.lower() not in LYRICS_SUFFIXES:
+        raise ValueError(f"lyrics must be .lrc or .txt: {lyrics_path}")
     media_path = media_path.resolve()
     if not media_path.is_file():
         raise IngestError(f"no such file: {media_path}")
@@ -221,11 +397,18 @@ def ingest(
 
     existing = library.read_manifest(track_id)
     if existing is not None and existing.documents.source.status == "ok":
+        if update:
+            return _update_existing(
+                existing, media_path, file_sha, library, cfg, lyrics_path, title
+            )
         return IngestResult(
             track_id=track_id,
             title=existing.title,
             has_video=existing.has_video,
             already_ingested=True,
+            ignored=_ignored_options(
+                existing, library.track_dir(track_id), cfg, lyrics_path, title
+            ),
         )
 
     info = probe(media_path)

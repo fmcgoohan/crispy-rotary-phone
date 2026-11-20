@@ -375,8 +375,9 @@ def _resolve_video_path(track_dir: Path, source_doc: dict) -> Path:
         return original
     raise PrerequisiteError(
         f"original video not found at {original} (OQ-2: it is referenced, "
-        "not copied) — restore it there, or re-ingest with "
-        "ingest.copy_video = true"
+        "not copied) — restore it there, or relink it with `mrw ingest "
+        "<its new path> --update` (with ingest.copy_video = true that also "
+        "keeps a verified copy in the library)"
     )
 
 
