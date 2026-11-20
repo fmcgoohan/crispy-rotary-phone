@@ -13,12 +13,15 @@ config-evolution policy (review 006) and the code-evolution policy separate.
 Entries written before this field existed carry no version and count as 1.
 
 Ingest ("source") is deliberately unversioned for now: ingest never
-re-runs on an existing track (re-ingest is a no-op), so a version could
-only ever display a stale that nothing can clear. Known consequence of the
+re-derives an existing track (a plain re-ingest is a no-op, and
+`mrw ingest --update` only replaces lyrics_input, original_path and the
+copies), so a version could only ever display a stale that nothing can
+clear. Known consequence of the
 lyrics-decoding fix (lyrics 2): source.json lyrics_input.line_count /
 has_timestamps for a BOM or non-UTF-8 lyrics file differ between tracks
 ingested before and after it. The lyrics stage re-decodes the file itself
-and reads neither field. Version source once ingest can update a track.
+and reads neither field (re-registering the lyrics with --update
+recomputes them). Version source once ingest can re-derive a track.
 """
 
 from __future__ import annotations
@@ -27,21 +30,29 @@ from typing import Optional
 
 ALGORITHM_VERSIONS: dict[str, int] = {
     "stems": 1,
-    "audio_features": 1,
+    # 2: level-gated onsets and rounded-rms silence decisions (FEAT-1/13),
+    #    trimmed beat grid + onset-support tempo.confidence (FEAT-3), silent
+    #    mix fails instead of bpm 0.0, sub-400 ms loudness (FEAT-8).
+    "audio_features": 2,
     # 2: LRC parsing (one line per time tag, ID tags skipped, [offset:],
     #    mm:ss:xx) and BOM/UTF-16/cp1252-aware decoding (LYR-5/7, SEC-7).
     # 3: a markup line with several leading time tags yields one markup
     #    entry per tag (was first tag only).
-    # 4: global monotone line alignment with hint-offset estimation and
+    # 4: supplied_markup is in hint order whenever every entry has a hint.
+    # 5: global monotone line alignment with hint-offset estimation and
     #    content-based word pairing; unanchored lines spread and clamped to
     #    [0, duration]; unmatched transcript words kept and counted toward
     #    coverage; zero-length word spans ignored in uncovered_spans
     #    (LYR-1/2/8/11, SCH-3, CRIT-1, CRIT-5).
-    "lyrics": 4,
+    "lyrics": 5,
     # 2: palette clustered from per-frame downscaled pixels (was averages
     #    of whole image rows — VID-1); rotation-aware frame geometry
     #    (portrait phone video decoded scrambled — VID-4).
-    "video": 2,
+    # 3: times on the audio timeline from a packet-pts frame table (stream
+    #    start offsets, VFR — VID-2); last shot ends at the frames that
+    #    exist (VID-11); the motion pass shares the shots' origin; motion
+    #    pairs straddling a cut belong to no shot (VID-3).
+    "video": 3,
 }
 
 

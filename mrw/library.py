@@ -16,7 +16,7 @@ from typing import Callable, Iterator
 from pydantic import BaseModel
 
 from . import canonical, hashing
-from .models import Manifest, doc_dump
+from .models import ApiLedgerEntry, Manifest, RunMetadata, doc_dump
 
 
 # Which documents consume each upstream artifact (PLAN §3 stage graph).
@@ -49,6 +49,65 @@ def mark_dependents_stale(manifest: Manifest, stage: str) -> list[str]:
             flipped.append(name)
             queue.extend(DEPENDENTS.get(name, ()))
     return flipped
+
+
+def _ledger_entry(stage: str, status: str, run: RunMetadata) -> ApiLedgerEntry:
+    usage = run.api_usage
+    assert usage is not None
+    return ApiLedgerEntry(
+        stage=stage,
+        started_at=run.started_at,
+        status="failed" if status == "failed" else "ok",
+        calls=usage.calls,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        usd=usage.usd,
+        estimated_usd=usage.estimated_usd,
+    )
+
+
+def seed_api_ledger(manifest: Manifest) -> None:
+    """Carry pre-1.5.0 spend into the append-only ledger (ORCH-7).
+
+    Before api_ledger existed, the only record of spend was each entry's
+    run.api_usage, which the next run of that stage replaces. On the first
+    write to such a manifest, copy every existing run.api_usage into
+    api_ledger, so the spend survives the replacement. No-op once the
+    ledger exists, or when nothing was ever spent (the field stays absent).
+    """
+    if manifest.api_ledger is not None:
+        return
+    seeded: list[ApiLedgerEntry] = []
+    for name in type(manifest.documents).model_fields:
+        entry = getattr(manifest.documents, name)
+        if entry.run is not None and entry.run.api_usage is not None:
+            seeded.append(_ledger_entry(name, entry.status, entry.run))
+    stems = manifest.stems
+    if stems is not None and stems.run is not None and stems.run.api_usage is not None:
+        seeded.append(_ledger_entry("stems", stems.status, stems.run))
+    if seeded:
+        manifest.api_ledger = seeded
+
+
+def append_api_ledger(
+    manifest: Manifest, stage: str, status: str, run: RunMetadata | None
+) -> None:
+    """Append one run's spend to the ledger (only runs that made calls).
+    Call inside an update_manifest mutate, i.e. under the manifest lock."""
+    if run is None or run.api_usage is None or run.api_usage.calls == 0:
+        return
+    if manifest.api_ledger is None:
+        manifest.api_ledger = []
+    manifest.api_ledger.append(_ledger_entry(stage, status, run))
+
+
+def failure_message(exc: BaseException) -> str:
+    """The `error` text for a failed run. Interruptions (KeyboardInterrupt,
+    which the CLI also raises for SIGTERM/SIGHUP — SEC-9) carry no message
+    of their own, so they are named explicitly."""
+    if not isinstance(exc, Exception):
+        return f"interrupted ({type(exc).__name__})"
+    return str(exc)
 
 
 class PrerequisiteError(RuntimeError):
@@ -92,6 +151,30 @@ class Library:
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
 
+    @contextlib.contextmanager
+    def stage_lock(self, track_id: str, stage: str) -> Iterator[None]:
+        """Refuse a second concurrent run of one stage on one track.
+
+        Two `mrw stems T` runs shared the fixed .stems.tmp dir: the second
+        deleted the first's output mid-write and then recorded failed over
+        a good result (ORCH-4). A non-blocking exclusive flock on
+        `<track>/.<stage>.lock` makes the second run exit 2 instead. The
+        lock dies with the process (crash, SIGKILL), so no stale-lock
+        cleanup is ever needed; the empty file stays, like .manifest.lock.
+        """
+        lock_path = self.track_dir(track_id) / f".{stage}.lock"
+        with open(lock_path, "a") as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise PrerequisiteError(
+                    f"stage {stage} already running for {track_id}"
+                ) from None
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def update_manifest(
         self, track_id: str, mutate: Callable[[Manifest], None]
     ) -> Manifest:
@@ -111,6 +194,7 @@ class Library:
             manifest = self.read_manifest(track_id)
             if manifest is None:
                 raise PrerequisiteError(f"no manifest for track {track_id}")
+            seed_api_ledger(manifest)
             mutate(manifest)
             self.write_manifest(track_id, manifest)
             return manifest

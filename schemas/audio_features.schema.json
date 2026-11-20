@@ -16,17 +16,17 @@
         "bpm_global": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here."
+          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here. Always > 0: a mix with no beat evidence (silent: mix rms_db at the -80 dB floor in every frame, dither included; or no beats tracked) fails the features stage (manifest status failed) instead of writing a document, so consumers may divide by this value."
         },
         "confidence": {
           "$ref": "common.schema.json#/$defs/confidence",
-          "description": "Beat-tracker confidence; below ~0.5 treat the whole grid as advisory."
+          "description": "Onset support for the beat grid, in [0, 1]. For beat i at frame b_i with local period p_i (the following inter-beat interval; the last beat reuses the previous one), on_i = max of the mix onset-strength envelope within ±30 ms of b_i and off_i = the smallest of the same ±30 ms max at the six probes b_i + k·p_i/7, k = 1..6 (a probe whose ±30 ms window would contain b_i or the next beat is skipped). The 1/7-beat points coincide with no common subdivision (8ths, swung 8ths, triplets, 16ths, quintuplets, sextuplets), so at least one probe reads the gap between subdivision hits and subdivided rhythms under a correct grid still count as rhythmic; septuplet subdivisions are the blind spot. confidence = mean over beats of clip((on_i − off_i) / ref, 0, 1), ref = 90th percentile of on_i; 0.0 when fewer than 2 beats. Beatless material (drones, noise) scores about 0.1-0.25; beats placed over silence count 0; a clean click track scores ~0.9. Below ~0.5 treat the whole grid as advisory. It does NOT detect half- or double-tempo errors: a grid at half (or twice) the true tempo still sits on onsets and can score high."
         }
       }
     },
     "beats": {
       "type": "object",
-      "description": "The unified beat grid. Beat index i = times[i]. Bar index of beat i = floor((i - downbeat_offset) / beats_per_bar) for i >= downbeat_offset; bar index clamps to 0 for beats before the first downbeat.",
+      "description": "The unified beat grid. Beat index i = times[i]. Beats span only the tracked rhythmic region: beatless intros and outros carry no beats (the tracker trims leading/trailing beats over weak onset strength); interior breakdowns are not trimmed. Bar index of beat i = floor((i - downbeat_offset) / beats_per_bar) for i >= downbeat_offset; bar index clamps to 0 for beats before the first downbeat.",
       "required": ["times", "beats_per_bar", "downbeat_offset", "downbeat_method"],
       "properties": {
         "times": { "$ref": "common.schema.json#/$defs/event_times" },
@@ -38,7 +38,7 @@
         "downbeat_offset": {
           "type": "integer",
           "minimum": 0,
-          "description": "Index into times of the first downbeat; downbeats are then every beats_per_bar-th beat."
+          "description": "Index into times of the first downbeat; downbeats are then every beats_per_bar-th beat. With fewer than beats_per_bar beats no phase fit runs and this is 0."
         },
         "downbeat_method": {
           "type": "string",
@@ -53,7 +53,7 @@
       "properties": {
         "integrated_lufs": {
           "type": "number",
-          "description": "EBU R128 integrated loudness of the mix; use to normalize levels across tracks."
+          "description": "EBU R128 integrated loudness of the mix; use to normalize levels across tracks. A fully silent program is clamped to -70.0 (the R128 absolute gate). Input shorter than one 400 ms gating block is measured as a single block spanning the whole signal."
         }
       }
     },
@@ -117,17 +117,27 @@
         "onsets": {
           "type": "object",
           "required": ["times", "strengths", "strength_reference"],
+          "description": "Level-gated onset events (see gate).",
           "properties": {
             "times": { "$ref": "common.schema.json#/$defs/event_times" },
             "strengths": {
               "type": "array",
               "items": { "type": "number", "minimum": 0, "maximum": 1 },
-              "description": "Parallel to times, same length; raw onset-envelope value divided by strength_reference, clamped to [0, 1]. The robust (p98) reference keeps values comparable across tracks: 'drum strength > 0.6' means roughly the same thing everywhere, and one outlier accent cannot compress the rest toward 0."
+              "description": "Parallel to times, same length; raw onset-envelope value divided by strength_reference, clamped to [0, 1]. Only onsets that pass the level gate (see gate) are listed; the strength itself is level-independent (the onset envelope is a ratio measure), so a quiet part's onsets are not weaker than a loud part's. The robust (p98) reference keeps values comparable across tracks: 'drum strength > 0.6' means roughly the same thing everywhere, and one outlier accent cannot compress the rest toward 0."
             },
             "strength_reference": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "98th percentile of this channel's raw onset-strength envelope — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference. When times is empty (a channel with no detected onsets, e.g. a silent stem), the documented sentinel 1.0 is written so the field stays present and positive."
+              "description": "98th percentile of this channel's raw onset-strength envelope (the whole envelope, before gating) — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference. When times is empty (no onset survived detection and gating — always so for a channel whose rms_db sits at the -80.0 floor throughout, e.g. a silent or dither-only stem), the documented sentinel 1.0 is written so the field stays present and positive."
+            },
+            "gate": {
+              "type": "object",
+              "description": "The level gate that selected these onsets, embedded so onset lists can be compared across tracks analyzed under different settings. Detected onsets are dropped when this channel's published rms_db at the onset frame is at floor_db, and (stems only) when the stem's rms_db minus the mix's rms_db at that frame is below relative_db — separation bleed and dither are otherwise reported as full-strength onsets. Absent in 1.0.0 documents (ungated).",
+              "required": ["floor_db"],
+              "properties": {
+                "floor_db": { "type": "number", "description": "rms_db silence floor (dBFS); onsets in frames at or below it are dropped." },
+                "relative_db": { "type": "number", "maximum": 0, "description": "Stems only (absent on the mix): minimum stem-minus-mix rms_db (dB) at the onset frame for the onset to be kept." }
+              }
             }
           }
         }

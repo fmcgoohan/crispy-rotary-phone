@@ -13,21 +13,31 @@ from pydantic import BaseModel
 
 # Per-document schema versions (PR #6 review, S2: never share a version
 # constant across documents — schemas evolve independently).
-SOURCE_SCHEMA_VERSION = "1.0.0"
-AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
+# source 1.1.0: additive — media.audio.stream_index / stream_count (which
+# audio stream was analysed, chosen explicitly — ORCH-13).
+SOURCE_SCHEMA_VERSION = "1.1.0"
+# audio_features 1.1.0: additive — optional `gate` on onsets (FEAT-1 level
+# gate, S4); tempo.confidence redefined as onset support (FEAT-3; same
+# field, same range, description updated).
+AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
 # 1.2.0: additive — lines[].source_line_index and top-level unmatched_words
 # in aligned mode (analysis findings LYR-9, CRIT-1).
 LYRICS_SCHEMA_VERSION = "1.2.0"
-VIDEO_SCHEMA_VERSION = "1.0.0"
+# video 1.1.0: additive — `timing` (offset of the video clock from the audio
+# origin, vfr indicator); every time now on the audio timeline (VID-2).
+VIDEO_SCHEMA_VERSION = "1.1.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
 # 1.3.0: additive — optional `api_usage` on run metadata (M5 cost ledger).
 # 1.4.0: additive — optional `algorithm_version` on document entries and the
 # stems block (mrw/versions.py: code changes mark documents stale).
-MANIFEST_SCHEMA_VERSION = "1.4.0"
+# 1.5.0: additive — `inputs_sha256` on document entries and `content_sha256`
+# on the stems block (mrw/inputs.py: consumed-input identities, DET-1);
+# optional top-level append-only `api_ledger` (ORCH-7/SCH-4/VID-7).
+MANIFEST_SCHEMA_VERSION = "1.5.0"
 
 Status = Literal["ok", "pending", "failed", "stale", "not_applicable"]
 
@@ -65,6 +75,8 @@ class MediaAudio(BaseModel):
     sample_rate: int
     channels: int
     bit_rate: Optional[int] = None
+    stream_index: Optional[int] = None
+    stream_count: Optional[int] = None
 
 
 class MediaVideo(BaseModel):
@@ -126,10 +138,16 @@ class Loudness(BaseModel):
     integrated_lufs: float
 
 
+class OnsetGate(BaseModel):
+    floor_db: float
+    relative_db: Optional[float] = None  # stems only; the mix has no reference
+
+
 class Onsets(BaseModel):
     times: list[float]
     strengths: list[float]
     strength_reference: float
+    gate: Optional[OnsetGate] = None  # absent in 1.0.0 documents
 
 
 class ChannelFeatures(BaseModel):
@@ -228,10 +246,16 @@ class Shot(BaseModel):
     caption: Optional[ShotCaption] = None
 
 
+class VideoTiming(BaseModel):
+    offset_seconds: float
+    vfr: bool
+
+
 class VideoDocument(BaseModel):
     schema_version: str = VIDEO_SCHEMA_VERSION
     track_id: str
     video_span: Interval
+    timing: Optional[VideoTiming] = None
     detector: Detector
     caption_backend: CaptionBackendInfo
     shots: list[Shot]
@@ -323,6 +347,7 @@ class DocumentEntry(BaseModel):
     content_sha256: Optional[str] = None
     config_hash: Optional[str] = None
     algorithm_version: Optional[int] = None
+    inputs_sha256: Optional[str] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
 
@@ -338,11 +363,23 @@ class ManifestDocuments(BaseModel):
 class StemsState(BaseModel):
     status: Status
     retained: bool
+    content_sha256: Optional[str] = None
     config_hash: Optional[str] = None
     algorithm_version: Optional[int] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
     warning: Optional[str] = None
+
+
+class ApiLedgerEntry(BaseModel):
+    stage: Literal["stems", "audio_features", "lyrics", "video", "structure"]
+    started_at: str
+    status: Literal["ok", "failed"]
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    usd: float
+    estimated_usd: Optional[float] = None
 
 
 class Manifest(BaseModel):
@@ -354,3 +391,4 @@ class Manifest(BaseModel):
     created_at: str
     documents: ManifestDocuments
     stems: Optional[StemsState] = None
+    api_ledger: Optional[list[ApiLedgerEntry]] = None

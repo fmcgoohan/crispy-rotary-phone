@@ -143,8 +143,21 @@ serialization, so there is exactly one code path that writes JSON.
 - **Original video is referenced, not copied**, by default; config
   `ingest.copy_video: true` copies it into the track dir for a fully
   self-contained library at the cost of size (review 001, R-7). Without the
-  copy, video re-analysis fails loudly if the original path has gone stale.
-- **Lyrics file** (optional): copied verbatim into the track dir as
+  copy, video re-analysis fails loudly if the original path has gone stale,
+  and refuses (exit 2) a file whose sha256 is not the ingested one.
+  `mrw ingest <new path> --update` relinks a moved original and, with
+  `copy_video` now true, makes the (atomic, hash-verified) copy. The video
+  stage uses a library copy only if it hashes to the ingested video, else
+  falls back to the original; `--update` replaces a damaged copy.
+- **Re-ingest**: a plain re-ingest of a registered file is a no-op that names
+  every option it ignored; `--update` registers new lyrics (resetting lyrics
+  and structure to pending), applies `--title`, makes the video copy,
+  records the given path as the original, and regenerates a missing
+  `source_audio.flac` — never touching other stages' documents. Fallible
+  work runs before the registered state changes; the lyrics stage refuses
+  (exit 2) a lyrics_input file that does not hash to source.json, and
+  re-running the `--update` repairs it.
+- **Lyrics file** (optional, `.lrc` or `.txt` only — anything else is exit 2): copied verbatim into the track dir as
   `lyrics_input.lrc` / `lyrics_input.txt`, hashed, and registered in
   `source.json`. `.lrc` timestamps are treated as *hints*, not truth (they are
   frequently offset); alignment still runs against audio.
@@ -196,6 +209,12 @@ vocal stem only.
   transient signal anyway). Analysis FFTs use window 2048 / hop 441.
 - **Tempo & beat grid**: `librosa.beat.beat_track` on the mix (onset-strength
   based), emitting sorted beat times plus a global BPM and a confidence score.
+  The grid is trimmed (no beats through beatless intros/outros) and the
+  confidence measures onset support for the beats against off-beat probes at
+  k/7 of a beat, which miss 8th, triplet, 16th, quintuplet and sextuplet
+  subdivisions (formula in the schema; blind to half/double tempo). A mix
+  with no beat evidence (rms at the floor throughout, or no beats tracked)
+  fails the stage rather than writing a 0 BPM grid.
   **Downbeats**: v1 estimates them by assuming 4/4 and choosing the beat phase
   (0–3) that maximizes mean onset strength — recorded with
   `"method": "assumed_4_4_phase_fit"` so consumers know it is an estimate.
@@ -207,6 +226,11 @@ vocal stem only.
   recorded in the document as `strength_reference`) and clamped to [0, 1], so
   "drum strength > 0.6" means roughly the same thing across tracks and one
   outlier accent can't compress the rest toward 0 (review 001, R-1).
+  Onsets are level-gated (the envelope itself is gain-invariant): frames at
+  the −80 dB rms floor carry none, and a stem's onsets are dropped where the
+  stem sits more than `features.onset_gate_relative_db` (default −30) below
+  the mix, which removes separation bleed and dither; the gate is embedded
+  in each `onsets.gate`.
 - **RMS/loudness envelope**: RMS in dBFS at the 10 ms hop, per mix and per
   stem, as uniform-hop series. Plus one scalar **integrated LUFS**
   (EBU R128 via `pyloudnorm`) for the mix, so the mapping engine can normalize
@@ -459,7 +483,9 @@ the same file at the same location (review 003, F-1). Enforced in layers:
   untranscribed vocal regions) lives *in the document* as flags/fields;
   logs are for humans debugging, documents are the API.
 - **Exit codes**: 0 success, 1 stage failure, 2 bad invocation/missing
-  prerequisites. Batch mode (`mrw analyze --all`) continues past per-track
+  prerequisites (including "stage already running for this track"),
+  130 interrupted (Ctrl-C, SIGTERM, SIGHUP — the running stage is recorded
+  as failed with any partial API spend). Batch mode (`mrw analyze --all`) continues past per-track
   failures and summarizes.
 
 ## 9. Performance & MPS notes (4-minute track, M-series)

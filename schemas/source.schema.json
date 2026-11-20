@@ -14,7 +14,7 @@
       "properties": {
         "original_path": {
           "type": "string",
-          "description": "Absolute path at ingest time. Informational; may go stale — nothing re-reads it."
+          "description": "Absolute path at ingest time. May go stale. The video stage re-reads it when no verified source_video.* copy is in the track dir, and refuses (exit 2) a file whose sha256 differs from sha256 below."
         },
         "filename": { "type": "string" },
         "size_bytes": { "type": "integer", "minimum": 0 },
@@ -61,7 +61,17 @@
             "codec": { "type": "string" },
             "sample_rate": { "type": "integer" },
             "channels": { "type": "integer" },
-            "bit_rate": { "type": "integer", "description": "bits/s if reported." }
+            "bit_rate": { "type": "integer", "description": "bits/s if reported." },
+            "stream_index": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Container stream index (ffprobe stream.index) of the audio stream that was decoded into source_audio.flac. Chosen explicitly, never by ffmpeg's automatic selection: the first audio stream with disposition.default, else the first audio stream. Every field of media.audio describes this stream. (Added in 1.1.0; absent in 1.0.0 documents, whose stream was ffmpeg's automatic choice.)"
+            },
+            "stream_count": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of audio streams in the container. Greater than 1 means other audio streams (alternate mixes, commentary, 5.1 versions) exist and were NOT analysed. (Added in 1.1.0.)"
+            }
           }
         },
         "video": {

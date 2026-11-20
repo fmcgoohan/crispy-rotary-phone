@@ -1,6 +1,6 @@
 {
   "_note": "Worked example, heavily truncated. Real dense series carry ~24,250 values each (242.5 s at 10 ms hop); real event lists carry hundreds of entries. Keys prefixed with _ are documentation-only and never produced by the tool.",
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "track_id": "3f9a1c7e2b8d4056",
   "duration_seconds": 242.5,
   "tempo": {
@@ -33,10 +33,11 @@
       "values": [812.4, 812.4, 1450.7, 2103.2, 2377.9, 2412.5, 2390.1, 2405.8]
     },
     "onsets": {
-      "_note": "~950 onsets in the real document; strengths are raw envelope values divided by strength_reference (p98 of the channel's onset envelope), clamped to [0,1].",
+      "_note": "~950 onsets in the real document; strengths are raw envelope values divided by strength_reference (p98 of the channel's onset envelope), clamped to [0,1]. Onsets in frames at the -80 dB rms floor are gated out; the mix has no relative gate (it is the reference).",
       "times": [0.614, 1.109, 1.612, 2.108, 2.611, 3.11],
       "strengths": [0.82, 0.44, 0.91, 0.47, 0.88, 0.95],
-      "strength_reference": 14.27
+      "strength_reference": 14.27,
+      "gate": {"floor_db": -80.0}
     }
   },
   "stems": {
@@ -56,7 +57,8 @@
       "onsets": {
         "times": [16.102, 16.598, 17.341],
         "strengths": [0.71, 0.38, 0.64],
-        "strength_reference": 8.65
+        "strength_reference": 8.65,
+        "gate": {"floor_db": -80.0, "relative_db": -30.0}
       }
     },
     "drums": {
@@ -76,7 +78,8 @@
         "_note": "Drum onsets are the primary rhythmic event stream for visual mapping. The 1.0 is a clamped above-reference accent.",
         "times": [0.613, 1.11, 1.611, 2.109, 2.61, 3.109],
         "strengths": [1.0, 0.52, 0.97, 0.55, 0.94, 0.98],
-        "strength_reference": 21.53
+        "strength_reference": 21.53,
+        "gate": {"floor_db": -80.0, "relative_db": -30.0}
       }
     },
     "bass": {
@@ -95,7 +98,8 @@
       "onsets": {
         "times": [0.615, 2.612, 4.61],
         "strengths": [0.88, 0.79, 0.83],
-        "strength_reference": 6.31
+        "strength_reference": 6.31,
+        "gate": {"floor_db": -80.0, "relative_db": -30.0}
       }
     },
     "other": {
@@ -114,7 +118,8 @@
       "onsets": {
         "times": [0.62, 4.612, 8.605],
         "strengths": [0.66, 0.71, 0.69],
-        "strength_reference": 5.92
+        "strength_reference": 5.92,
+        "gate": {"floor_db": -80.0, "relative_db": -30.0}
       }
     }
   },

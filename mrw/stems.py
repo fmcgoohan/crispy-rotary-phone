@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, config, versions
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from . import TOOL_VERSION, config, inputs, versions
+from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import RunMetadata, StemsState
 
 STEM_NAMES = ("vocals", "drums", "bass", "other")
@@ -139,6 +139,12 @@ def _separate(
 
 def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     track_id = library.resolve_track_id(track)
+    with library.stage_lock(track_id, "stems"):
+        return _run_stems(track_id, library, cfg)
+
+
+def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
+    track_id = library.resolve_track_id(track)
     manifest = library.read_manifest(track_id)
     if manifest is None or manifest.documents.source.status != "ok":
         raise PrerequisiteError(f"track {track_id} has no successful ingest")
@@ -169,12 +175,24 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     t0 = time.monotonic()
     tmp_dir = track_dir / ".stems.tmp"
     mps_fallback_error: str | None = None
+    # Set once the ok block is committed: an interrupt landing after that
+    # (before the return) must not overwrite it with failed (review A-2).
+    recorded = False
+    # Identity of the stems that dependents can see on disk — what a failed
+    # block carries forward (review A-1). Becomes the new content once the
+    # new stems replace the old ones.
+    on_disk_sha = prior.content_sha256 if prior else None
 
     def _record(state: StemsState) -> None:
         def apply(m) -> None:
             m.stems = state
-            if state.status == "ok":
-                # No stems digest yet: any fresh separation invalidates consumers.
+            if state.content_sha256 != (prior.content_sha256 if prior else None):
+                # Consumers go stale only when the stems on disk actually
+                # changed (or the old block predates content_sha256): a
+                # byte-identical CPU re-separation keeps them current. Keyed
+                # on content, not status: a run interrupted after its stems
+                # replaced the old ones records failed with the new identity
+                # and must still flip them (review A-1).
                 mark_dependents_stale(m, "stems")
 
         apply(manifest)
@@ -213,6 +231,9 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             tool_version=TOOL_VERSION,
             device=device,
         )
+        # Identity of what dependents consume (mrw/inputs.py), taken from the
+        # temp dir before the swap and kept even when retain is false.
+        content_sha = inputs.stems_dir_sha256(tmp_dir, STEM_NAMES)
         if cfg.stems.retain:
             if stems_dir.exists():
                 shutil.rmtree(stems_dir)
@@ -226,11 +247,13 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 # retain flipped true→false: drop the previously-retained
                 # stems too, so `retained: false` reflects disk reality (H2).
                 shutil.rmtree(stems_dir)
+        on_disk_sha = content_sha
 
         _record(
             StemsState(
                 status="ok",
                 retained=cfg.stems.retain,
+                content_sha256=content_sha,
                 config_hash=stems_hash,
                 algorithm_version=versions.current("stems"),
                 run=run,
@@ -241,6 +264,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 ),
             )
         )
+        recorded = True
         return StemsResult(
             track_id=track_id,
             device=device,
@@ -250,7 +274,11 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:  # fail loudly, never leave partial stems/
+    except BaseException as exc:  # fail loudly, never leave partial stems/
+        # BaseException (SEC-9): an interrupted run is recorded as failed
+        # too, then the interruption itself propagates unwrapped.
+        if recorded:
+            raise
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
         if mps_fallback_error:
@@ -260,16 +288,23 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             # CPU-side detail (round 3): 200 + 250 + framing < 500.
             message = (
                 f"cpu retry failed after mps failure ({mps_fallback_error}): "
-                f"{str(exc)[:250]}"
+                f"{failure_message(exc)[:250]}"
             )
         else:
-            message = str(exc)
+            message = failure_message(exc)
         _record(
             StemsState(
                 status="failed",
                 retained=cfg.stems.retain,
+                # The stems on disk are unchanged by the failure, so their
+                # identity carries forward (review A-1): dependents built
+                # from them stay current, and an identical re-separation
+                # after this failure does not mark them stale.
+                content_sha256=on_disk_sha,
                 config_hash=stems_hash,
                 error=message[:500],
             )
         )
+        if not isinstance(exc, Exception):
+            raise
         raise StemsError(message[:500]) from exc

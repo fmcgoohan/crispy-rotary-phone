@@ -41,6 +41,10 @@
           "type": "boolean",
           "description": "false = stems were generated for dependent stages but deleted per config; a re-run of a dependent stage must regenerate them."
         },
+        "content_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256",
+          "description": "Identity of the separated stems: sha256 over the four stem files' sha256 hex digests concatenated in vocals, drums, bass, other order. Recorded on every successful separation, also when retained is false. A failed block carries forward the identity of the stems still on disk (absent if none were ever recorded). Consumed by dependents' inputs_sha256. (Added in 1.5.0.)"
+        },
         "config_hash": { "$ref": "#/$defs/config_hash" },
         "algorithm_version": {
           "type": "integer",
@@ -57,13 +61,39 @@
           "description": "Present when the stage succeeded with a caveat a batch operator should see — e.g. the MPS-failure reason behind an automatic CPU fallback. (Added in 1.2.0.)"
         }
       }
+    },
+    "api_ledger": {
+      "type": "array",
+      "description": "Append-only cost ledger: one entry per run that made external API calls, successful or failed, appended under the manifest lock and never rewritten. run.api_usage stays the per-run view of the latest run; this list is what `mrw costs` sums. On the first manifest write by a 1.5.0+ mrw, any existing run.api_usage is seeded into it so pre-upgrade spend is kept. Absent = no recorded spend (or a manifest not written since before 1.5.0, whose run.api_usage blocks are then the ledger). USD is rounded to 4 decimal places. (Added in 1.5.0.)",
+      "items": {
+        "type": "object",
+        "required": ["stage", "started_at", "status", "calls", "input_tokens", "output_tokens", "usd"],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": ["stems", "audio_features", "lyrics", "video", "structure"],
+            "description": "The manifest key of the stage that spent (documents.* name, or stems)."
+          },
+          "started_at": { "type": "string", "format": "date-time" },
+          "status": {
+            "type": "string",
+            "enum": ["ok", "failed"],
+            "description": "Outcome of the run; failed includes interrupted runs (partial spend)."
+          },
+          "calls": { "type": "integer", "minimum": 0 },
+          "input_tokens": { "type": "integer", "minimum": 0 },
+          "output_tokens": { "type": "integer", "minimum": 0 },
+          "usd": { "type": "number", "minimum": 0 },
+          "estimated_usd": { "type": "number", "minimum": 0 }
+        }
+      }
     }
   },
   "$defs": {
     "status": {
       "type": "string",
       "enum": ["ok", "pending", "failed", "stale", "not_applicable"],
-      "description": "pending = never run; stale = present but out of date — written when an upstream document it was derived from was regenerated with different content (since 1.4.0), and derived by `mrw status` for an ok entry whose config_hash or algorithm_version no longer matches the current config and code; a stale document re-runs and is refused as a prerequisite; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
+      "description": "pending = never run; stale = present but out of date — written when an upstream document it was derived from was regenerated with different content (since 1.4.0), and derived by `mrw status` for an ok entry whose config_hash, algorithm_version or inputs_sha256 no longer matches the current config, code and inputs; a stale document re-runs and is refused as a prerequisite; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
     },
     "config_hash": {
       "type": "string",
@@ -72,7 +102,7 @@
     },
     "run_metadata": {
       "type": "object",
-      "description": "Volatile provenance for the most recent successful run of the stage.",
+      "description": "Volatile provenance for the most recent run of the stage: the successful one for an ok entry; failed entries carry it when the run spent on an API (api_usage).",
       "required": ["started_at", "duration_seconds", "tool_version"],
       "properties": {
         "started_at": { "type": "string", "format": "date-time" },
@@ -85,7 +115,7 @@
         },
         "api_usage": {
           "type": "object",
-          "description": "Present when the run made external API calls (M5+): the cost ledger entry. estimated_usd is the pre-flight estimate for estimate-vs-actual comparison. Recorded on failed runs too — partial spend never vanishes from the ledger. (Added in 1.3.0.)",
+          "description": "Present when the run made external API calls (M5+): the cost ledger entry. estimated_usd is the pre-flight estimate for estimate-vs-actual comparison. Recorded on failed runs too. Since 1.5.0 every spending run is also appended to the top-level api_ledger, so partial spend never vanishes when a later run replaces this entry. (Added in 1.3.0.)",
           "required": ["calls", "input_tokens", "output_tokens", "usd"],
           "properties": {
             "calls": { "type": "integer", "minimum": 0 },
@@ -109,13 +139,18 @@
         "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
         "content_sha256": {
           "$ref": "common.schema.json#/$defs/sha256",
-          "description": "Hash of the document file as written — the determinism-audit handle."
+          "description": "Hash of the document file as written — the determinism-audit handle. On a failed entry: the hash of the document still on disk from the last write, carried forward so its dependents stay current (absent if none was ever written)."
         },
         "config_hash": { "$ref": "#/$defs/config_hash" },
         "algorithm_version": {
           "type": "integer",
           "minimum": 1,
           "description": "Version of the stage's code that produced this entry (mrw/versions.py). An ok entry whose version differs from the running mrw's is stale. Absent = 1 (entries written before 1.4.0). (Added in 1.4.0.)"
+        },
+        "inputs_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "First 16 hex chars of a sha256 over the identities of the inputs this document was built from (mrw/inputs.py): audio_features ← stems content_sha256 + source audio_stream_sha256; lyrics ← audio_features content_sha256 + stems content_sha256 + source lyrics_input.sha256; video ← source file.sha256. An ok entry whose value differs from the current inputs is stale. Absent (entries written before 1.5.0) counts as matching. (Added in 1.5.0.)"
         },
         "run": { "$ref": "#/$defs/run_metadata" },
         "error": {
