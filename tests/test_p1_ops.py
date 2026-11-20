@@ -298,13 +298,61 @@ def test_truncated_copy_is_ignored_for_the_original(tmp_path):
     source = json.loads((track_dir / "source.json").read_text())
     assert _resolve_video_path(track_dir, source) == mp4
 
-    # A same-size copy with other bytes is picked, then refused by identity.
-    data = bytearray(mp4.read_bytes())
+
+
+def _damage(path: Path) -> None:
+    data = bytearray(path.read_bytes())
     data[-1] ^= 0xFF
-    (track_dir / "source_video.mp4").write_bytes(bytes(data))
+    path.write_bytes(bytes(data))
+
+
+def test_damaged_copy_falls_back_to_intact_original(tmp_path):
+    # Review A-3: a same-size copy with rotted bytes must not hide the
+    # intact original, nor be blamed on it.
+    from mrw.video import _resolve_video_path
+    from test_p1_inputs import _tiny_video
+
+    mp4 = tmp_path / "clip.mp4"
+    _tiny_video(mp4, "red")
+    library = tmp_path / "lib"
+    track_id = _ingest(mp4, library)
+    track_dir = library / track_id
+    copy = track_dir / "source_video.mp4"
+    shutil.copyfile(mp4, copy)
+    _damage(copy)
+    source = json.loads((track_dir / "source.json").read_text())
+    assert _resolve_video_path(track_dir, source) == mp4
     result = runner.invoke(app, ["video", track_id, "--library", str(library)])
+    assert result.exit_code == 0, result.output
+
+    # Original gone too: the error names the damaged copy and its remedy.
+    moved = tmp_path / "moved.mp4"
+    mp4.rename(moved)
+    result = runner.invoke(app, ["video", track_id, "--library", str(library),
+                                 "--config", str(_cfg(tmp_path, "0.3"))])
     assert result.exit_code == 2
-    assert "not the ingested video" in result.output
+    assert f"library copy {copy} is damaged" in result.output
+    assert "--update" in result.output
+    assert "restore the original" not in result.output
+
+    # `--update` repairs it, whatever copy_video says.
+    result = runner.invoke(app, ["ingest", str(moved), "--library", str(library)])
+    assert "damaged library video copy (would be replaced)" in result.output
+    result = runner.invoke(
+        app, ["ingest", str(moved), "--library", str(library), "--update"])
+    assert result.exit_code == 0, result.output
+    assert "replaced the damaged library video copy" in result.output
+    assert copy.read_bytes() == moved.read_bytes()
+    moved.unlink()
+    result = runner.invoke(app, ["video", track_id, "--library", str(library),
+                                 "--config", str(_cfg(tmp_path, "0.3"))])
+    assert result.exit_code == 0, result.output
+
+
+def _cfg(tmp_path: Path, threshold_seconds: str) -> Path:
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text(f"[video]\nmin_shot_seconds = {threshold_seconds}\n")
+    return cfg
 
 
 # --- failed entries keep the on-disk identity (review A-1) ------------------------

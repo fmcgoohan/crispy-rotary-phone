@@ -146,7 +146,9 @@ serialization, so there is exactly one code path that writes JSON.
   copy, video re-analysis fails loudly if the original path has gone stale,
   and refuses (exit 2) a file whose sha256 is not the ingested one.
   `mrw ingest <new path> --update` relinks a moved original and, with
-  `copy_video` now true, makes the (atomic, hash-verified) copy.
+  `copy_video` now true, makes the (atomic, hash-verified) copy. The video
+  stage uses a library copy only if it hashes to the ingested video, else
+  falls back to the original; `--update` replaces a damaged copy.
 - **Re-ingest**: a plain re-ingest of a registered file is a no-op that names
   every option it ignored; `--update` registers new lyrics (resetting lyrics
   and structure to pending), applies `--title`, makes the video copy,

@@ -361,37 +361,54 @@ def _detect_shots(path: Path, vcfg: config.VideoConfig, fps: float,
 
 
 def _resolve_video_path(track_dir: Path, source_doc: dict) -> Path:
-    # A copy is used only when its size matches the ingested file: a
-    # truncated leftover (from before copies were atomic) is ignored in
-    # favour of the original (SEC-9). Its bytes are then verified by
-    # _verify_video_identity like any other candidate.
+    """The file the stage analyses: the first candidate whose bytes are the
+    ingested video (DET-3/ORCH-2/VID-5). Library copies source_video.* are
+    tried first, then original_path. Only a candidate of the recorded size
+    is hashed (~1 s/GB, small next to the stage's decode passes), so a
+    truncated leftover copy costs nothing (SEC-9).
+
+    A copy that fails the hash check does not hide an intact original
+    (review A-3): the stage falls back to it. When nothing verifies, the
+    error names each rejected file and the remedy that fits it.
+    """
+    expected = source_doc["file"]["sha256"]
     size = source_doc["file"]["size_bytes"]
+    original = Path(source_doc["file"]["original_path"])
     copies = [p for p in sorted(track_dir.glob("source_video.*"))
               if p.is_file() and p.stat().st_size == size]
-    if copies:
-        return copies[0]
-    original = Path(source_doc["file"]["original_path"])
+    problems: list[str] = []
+    for copy in copies:
+        actual = hashing.sha256_file(copy)
+        if actual == expected:
+            return copy
+        problems.append(
+            f"the library copy {copy} is damaged (sha256 {actual}, expected "
+            f"{expected}) — delete it, or replace it with `mrw ingest "
+            f"<the original video> --update`"
+        )
     if original.is_file():
-        return original
-    raise PrerequisiteError(
-        f"original video not found at {original} (OQ-2: it is referenced, "
-        "not copied) — restore it there, or relink it with `mrw ingest "
-        "<its new path> --update` (with ingest.copy_video = true that also "
-        "keeps a verified copy in the library)"
-    )
-
-
-def _verify_video_identity(video_path: Path, source_doc: dict) -> None:
-    """Refuse a file whose bytes are not the ingested video (DET-3/ORCH-2/
-    VID-5). Hashing is ~1 s/GB, small next to the stage's decode passes."""
-    expected = source_doc["file"]["sha256"]
-    actual = hashing.sha256_file(video_path)
-    if actual != expected:
-        raise PrerequisiteError(
-            f"the file at {video_path} is not the ingested video (sha256 "
+        actual = (
+            hashing.sha256_file(original)
+            if original.stat().st_size == size
+            else f"of a {original.stat().st_size}-byte file"
+        )
+        if actual == expected:
+            return original
+        problems.append(
+            f"the file at {original} is not the ingested video (sha256 "
             f"{actual}, expected {expected}) — restore the original there, "
             "or ingest the new file as a new track"
         )
+    elif not problems:
+        raise PrerequisiteError(
+            f"original video not found at {original} (OQ-2: it is referenced, "
+            "not copied) — restore it there, or relink it with `mrw ingest "
+            "<its new path> --update` (with ingest.copy_video = true that also "
+            "keeps a verified copy in the library)"
+        )
+    else:
+        problems.append(f"the original is not at {original}")
+    raise PrerequisiteError("; ".join(problems))
 
 
 def run_video(
@@ -437,7 +454,6 @@ def _run_video(
     # an up-to-date track whose original moved stays a no-op, and bytes
     # that are not the ingested video are refused before any analysis.
     video_path = _resolve_video_path(track_dir, source_doc)
-    _verify_video_identity(video_path, source_doc)
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()

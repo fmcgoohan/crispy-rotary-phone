@@ -219,14 +219,20 @@ def _read_source(track_dir: Path) -> dict | None:
         return None
 
 
-def _verified_copy_exists(track_dir: Path, source_doc: dict) -> bool:
-    """Same test as the video stage's _resolve_video_path (size match);
-    the stage then verifies the bytes."""
+def _library_copy_state(track_dir: Path, source_doc: dict) -> str:
+    """'ok' when some source_video.* hashes to the ingested video (the video
+    stage's own test), 'damaged' when copies exist but none does, 'missing'
+    when there is none. A size match alone is not enough (review A-3): a
+    same-size copy with rotted bytes must be reported and repaired."""
+    expected = source_doc["file"]["sha256"]
     size = source_doc["file"]["size_bytes"]
-    return any(
-        p.is_file() and p.stat().st_size == size
-        for p in track_dir.glob("source_video.*")
-    )
+    copies = [p for p in sorted(track_dir.glob("source_video.*")) if p.is_file()]
+    if any(
+        p.stat().st_size == size and hashing.sha256_file(p) == expected
+        for p in copies
+    ):
+        return "ok"
+    return "damaged" if copies else "missing"
 
 
 def _lyrics_changed(lyrics_path: Path | None, source_doc: dict | None) -> bool:
@@ -257,13 +263,12 @@ def _ignored_options(
         )
     if title is not None and title != existing.title:
         ignored.append(f"--title {title!r} (current title {existing.title!r})")
-    if (
-        existing.has_video
-        and cfg.ingest.copy_video
-        and source_doc is not None
-        and not _verified_copy_exists(track_dir, source_doc)
-    ):
-        ignored.append("ingest.copy_video = true (no copy in the library yet)")
+    if existing.has_video and source_doc is not None:
+        copy_state = _library_copy_state(track_dir, source_doc)
+        if copy_state == "damaged":
+            ignored.append("damaged library video copy (would be replaced)")
+        elif cfg.ingest.copy_video and copy_state == "missing":
+            ignored.append("ingest.copy_video = true (no copy in the library yet)")
     if not (track_dir / "source_audio.flac").is_file():
         ignored.append("missing source_audio.flac (would be regenerated)")
     return ignored
@@ -333,13 +338,21 @@ def _update_existing(
         source_doc["lyrics_input"] = new.model_dump(mode="json")
         updated.append(f"registered lyrics {lyrics_path.name} ({new.format})")
 
-    if (
-        existing.has_video
-        and cfg.ingest.copy_video
-        and not _verified_copy_exists(track_dir, source_doc)
-    ):
-        copy_video_atomic(media_path, track_dir, file_sha)
-        updated.append("copied the video into the library")
+    copy_state = (
+        _library_copy_state(track_dir, source_doc) if existing.has_video else "n/a"
+    )
+    if copy_state == "damaged" or (cfg.ingest.copy_video and copy_state == "missing"):
+        # A damaged copy is replaced whatever copy_video says: the library
+        # chose to keep one, and the video stage would otherwise have to
+        # skip it on every run (review A-3).
+        dest = copy_video_atomic(media_path, track_dir, file_sha)
+        for stray in track_dir.glob("source_video.*"):
+            if stray != dest:
+                stray.unlink()  # damaged copies under another extension
+        updated.append(
+            "replaced the damaged library video copy" if copy_state == "damaged"
+            else "copied the video into the library"
+        )
 
     if source_doc["file"]["original_path"] != str(media_path):
         source_doc["file"]["original_path"] = str(media_path)
