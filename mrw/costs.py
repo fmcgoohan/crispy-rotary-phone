@@ -84,7 +84,10 @@ def estimate(
 def aggregate_ledger(manifests: list[dict]) -> dict:
     """Sum recorded API usage across manifests (`mrw costs`).
 
-    Reads the additive run.api_usage blocks; returns totals plus
+    Sums the append-only api_ledger (manifest 1.5.0+) when present — it
+    already holds any run.api_usage seeded from before it existed, so the
+    two are never added together. A manifest not written since before
+    1.5.0 falls back to its run.api_usage blocks. Returns totals plus
     estimate-vs-actual where both were recorded.
     """
     totals = {
@@ -96,15 +99,10 @@ def aggregate_ledger(manifests: list[dict]) -> dict:
         "estimated_usd": 0.0,
     }
     for manifest in manifests:
-        blocks = []
-        documents = manifest.get("documents", {})
-        for entry in documents.values():
-            run = entry.get("run") or {}
-            if run.get("api_usage"):
-                blocks.append(run["api_usage"])
-        stems_run = (manifest.get("stems") or {}).get("run") or {}
-        if stems_run.get("api_usage"):
-            blocks.append(stems_run["api_usage"])
+        if "api_ledger" in manifest:
+            blocks = list(manifest["api_ledger"])
+        else:
+            blocks = _legacy_usage_blocks(manifest)
         for usage in blocks:
             totals["runs"] += 1
             totals["calls"] += usage.get("calls", 0)
@@ -115,3 +113,16 @@ def aggregate_ledger(manifests: list[dict]) -> dict:
                 totals["estimated_usd"] + usage.get("estimated_usd", 0.0), 4
             )
     return totals
+
+
+def _legacy_usage_blocks(manifest: dict) -> list[dict]:
+    blocks = []
+    documents = manifest.get("documents", {})
+    for entry in documents.values():
+        run = entry.get("run") or {}
+        if run.get("api_usage"):
+            blocks.append(run["api_usage"])
+    stems_run = (manifest.get("stems") or {}).get("run") or {}
+    if stems_run.get("api_usage"):
+        blocks.append(stems_run["api_usage"])
+    return blocks

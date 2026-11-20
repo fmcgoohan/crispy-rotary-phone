@@ -30,7 +30,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, costs, hashing, inputs, versions
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from .library import Library, PrerequisiteError, append_api_ledger, mark_dependents_stale
 from .models import (
     ApiUsage,
     CaptionBackendInfo,
@@ -433,6 +433,7 @@ def _run_video(
     def _record(entry: DocumentEntry) -> None:
         def apply(m) -> None:
             m.documents.video = entry
+            append_api_ledger(m, "video", entry.status, entry.run)
             if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
                 mark_dependents_stale(m, "video")
 

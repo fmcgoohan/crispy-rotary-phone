@@ -61,6 +61,32 @@
           "description": "Present when the stage succeeded with a caveat a batch operator should see — e.g. the MPS-failure reason behind an automatic CPU fallback. (Added in 1.2.0.)"
         }
       }
+    },
+    "api_ledger": {
+      "type": "array",
+      "description": "Append-only cost ledger: one entry per run that made external API calls, successful or failed, appended under the manifest lock and never rewritten. run.api_usage stays the per-run view of the latest run; this list is what `mrw costs` sums. On the first manifest write by a 1.5.0+ mrw, any existing run.api_usage is seeded into it so pre-upgrade spend is kept. Absent = no recorded spend (or a manifest not written since before 1.5.0, whose run.api_usage blocks are then the ledger). USD is rounded to 4 decimal places. (Added in 1.5.0.)",
+      "items": {
+        "type": "object",
+        "required": ["stage", "started_at", "status", "calls", "input_tokens", "output_tokens", "usd"],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": ["stems", "audio_features", "lyrics", "video", "structure"],
+            "description": "The manifest key of the stage that spent (documents.* name, or stems)."
+          },
+          "started_at": { "type": "string", "format": "date-time" },
+          "status": {
+            "type": "string",
+            "enum": ["ok", "failed"],
+            "description": "Outcome of the run; failed includes interrupted runs (partial spend)."
+          },
+          "calls": { "type": "integer", "minimum": 0 },
+          "input_tokens": { "type": "integer", "minimum": 0 },
+          "output_tokens": { "type": "integer", "minimum": 0 },
+          "usd": { "type": "number", "minimum": 0 },
+          "estimated_usd": { "type": "number", "minimum": 0 }
+        }
+      }
     }
   },
   "$defs": {
@@ -76,7 +102,7 @@
     },
     "run_metadata": {
       "type": "object",
-      "description": "Volatile provenance for the most recent successful run of the stage.",
+      "description": "Volatile provenance for the most recent run of the stage: the successful one for an ok entry; failed entries carry it when the run spent on an API (api_usage).",
       "required": ["started_at", "duration_seconds", "tool_version"],
       "properties": {
         "started_at": { "type": "string", "format": "date-time" },
@@ -89,7 +115,7 @@
         },
         "api_usage": {
           "type": "object",
-          "description": "Present when the run made external API calls (M5+): the cost ledger entry. estimated_usd is the pre-flight estimate for estimate-vs-actual comparison. Recorded on failed runs too — partial spend never vanishes from the ledger. (Added in 1.3.0.)",
+          "description": "Present when the run made external API calls (M5+): the cost ledger entry. estimated_usd is the pre-flight estimate for estimate-vs-actual comparison. Recorded on failed runs too. Since 1.5.0 every spending run is also appended to the top-level api_ledger, so partial spend never vanishes when a later run replaces this entry. (Added in 1.3.0.)",
           "required": ["calls", "input_tokens", "output_tokens", "usd"],
           "properties": {
             "calls": { "type": "integer", "minimum": 0 },

@@ -90,5 +90,27 @@
       "device": "cpu"
     },
     "warning": "mps separation failed, fell back to cpu: MPS backend out of memory (simulated example)"
-  }
+  },
+  "api_ledger": [
+    {
+      "stage": "video",
+      "started_at": "2026-07-11T17:44:02Z",
+      "status": "failed",
+      "calls": 12,
+      "input_tokens": 7920,
+      "output_tokens": 2268,
+      "usd": 0.0193,
+      "estimated_usd": 0.1687
+    },
+    {
+      "stage": "video",
+      "started_at": "2026-07-11T17:46:25Z",
+      "status": "ok",
+      "calls": 78,
+      "input_tokens": 51480,
+      "output_tokens": 14742,
+      "usd": 0.1252,
+      "estimated_usd": 0.1687
+    }
+  ]
 }
