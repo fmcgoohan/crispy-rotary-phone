@@ -58,25 +58,23 @@ class FeaturesConfig(_Section):
     # Downbeat phase-fit onset-sampling half-window (review 006 F-1): a
     # tuning knob, so it participates in the features config_hash.
     phase_fit_window_seconds: float = Field(default=0.03, gt=0)
+    # Stem onset gate relative to the mix (FEAT-1): a stem onset is dropped
+    # when the stem's rms_db at that frame is more than this many dB below
+    # the mix's. Added after M3: joining the config_hash re-stales every
+    # existing features document — deliberate (config-evolution policy,
+    # review 006). Embedded in each stem's onsets.gate (S4).
+    onset_gate_relative_db: float = Field(default=-30.0, le=0)
 
 
 class LyricsConfig(_Section):
     # OQ-7: faster-whisper on the isolated vocal stem; `small` default.
     # A pinned size name (mrw/whisper_models.py) or a local model directory;
-    # checked at load so a typo exits 2 before any work.
+    # checked at load so a typo exits 2 before any work. A local directory
+    # is an explicit opt-out of pinning: it is stored as an absolute path and
+    # only that path joins the config_hash, so replacing the weights in place
+    # changes lyrics.json without marking it stale.
     model: str = "small"
 
-    @field_validator("model")
-    @classmethod
-    def _model_is_pinned_or_local(cls, value: str) -> str:
-        from .whisper_models import WHISPER_MODELS
-
-        if value in WHISPER_MODELS or Path(value).is_dir():
-            return value
-        raise ValueError(
-            f"'{value}' is not a pinned whisper model ({', '.join(sorted(WHISPER_MODELS))}) "
-            "or an existing local model directory"
-        )
     # Optional language pin; None = detect once and record (schema).
     language: str | None = None
     # Flag thresholds (schema-documented vocabulary; review 006 F-1 policy:
@@ -108,6 +106,20 @@ class LyricsConfig(_Section):
     # Review 007 field finding 4 investigation knob: whisper's no-speech
     # gate, exposed so decode-setting changes are config (and hash) events.
     decode_no_speech_threshold: float = 0.6
+
+    @field_validator("model")
+    @classmethod
+    def _model_is_pinned_or_local(cls, value: str) -> str:
+        from .whisper_models import WHISPER_MODELS
+
+        if value in WHISPER_MODELS:
+            return value
+        if Path(value).is_dir():
+            return str(Path(value).resolve())
+        raise ValueError(
+            f"'{value}' is not a pinned whisper model ({', '.join(sorted(WHISPER_MODELS))}) "
+            "or an existing local model directory"
+        )
 
 
 class VideoConfig(_Section):

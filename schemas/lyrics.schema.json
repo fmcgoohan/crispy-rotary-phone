@@ -83,7 +83,7 @@
     },
     "supplied_markup": {
       "type": "array",
-      "description": "Present in aligned mode when the supplied lyrics file contained section-header lines like '[Verse 1]' or '[Chorus]'. Header lines are excluded from lines[] and from coverage math (they are not sung); they are recorded here and feed structure.json section labeling as 'supplied_markup' evidence. Sorted by source_line_index.",
+      "description": "Present in aligned mode when the supplied lyrics file contained section-header lines like '[Verse 1]' or '[Chorus]'. Header lines are excluded from lines[] and from coverage math (they are not sung); they are recorded here and feed structure.json section labeling as 'supplied_markup' evidence. A header line carrying several leading LRC time tags yields one entry per tag (same source_line_index). Order: by hint_seconds when every entry has one, otherwise by source_line_index (file order).",
       "items": {
         "type": "object",
         "required": ["text", "source_line_index"],

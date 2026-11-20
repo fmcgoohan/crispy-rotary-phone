@@ -328,9 +328,9 @@ def parse_supplied_lyrics(
             )
     if expanded and all(l.hint_seconds is not None for l in lines):
         lines.sort(key=lambda l: l.hint_seconds)  # stable: file order on ties
-    if all(m.hint_seconds is not None for m in markup) and len(
-        {m.source_line_index for m in markup}
-    ) < len(markup):
+    # One rule regardless of expansion: hint order when every entry has a
+    # hint (an LRC timeline), else file order. Stable, so ties keep file order.
+    if markup and all(m.hint_seconds is not None for m in markup):
         markup.sort(key=lambda m: m.hint_seconds)
     return lines, markup
 

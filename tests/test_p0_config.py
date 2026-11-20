@@ -37,10 +37,13 @@ def test_bad_config_exits_2_with_the_key_named(tmp_path, toml, needle):
 def test_strictness_does_not_move_stage_hashes():
     # Golden values from before the change: extra="forbid" / Literal types
     # must not alter model_dump, or every library would mass-stale.
+    # The features pin moved once, deliberately: onset_gate_relative_db
+    # (FEAT-1) joins the features config subset — a decided mass-stale under
+    # the config-evolution policy (review 006), not a strictness side effect.
     defaults = config.Config()
     assert [config.stage_hash(getattr(defaults, s))
             for s in ("ingest", "stems", "features", "lyrics", "video")] == [
-        "3bafde60e0bcb7eb", "2f212e9aa4a05d70", "39dc2973b83251c3",
+        "3bafde60e0bcb7eb", "2f212e9aa4a05d70", "44c720bfe15ffcf7",
         "762e9f5f09f43085", "c3041f27e221e1c0"]
 
 
