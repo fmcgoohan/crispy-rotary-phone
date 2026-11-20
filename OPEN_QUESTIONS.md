@@ -98,6 +98,15 @@ sits behind one function; swapping later is cheap. Related default to
 confirm: is `small` the right size, or should `medium` be the default for
 sung vocals at ~2–3× the runtime? (Recommend: `small` default, `medium` as
 documented config for hard material.)
+**Resolution (analysis follow-ups, fmcgoohan/crispy-rotary-phone#16 and #17):**
+every faster-whisper size name is pinned to an upstream commit
+(`mrw/whisper_models.py`); `mrw models fetch` downloads that commit and
+transcription loads it from the cache only. A local model directory is an
+explicit opt-out: it is stored as an absolute path, and only that path joins
+the lyrics config_hash. The hash is therefore tied to one machine's layout,
+and replacing the weights in place changes lyrics.json without marking it
+stale. Flagging an unpinned model inside lyrics.json is deferred (it would be
+an additive schema change).
 
 **OQ-8 — Shot detector: PySceneDetect ContentDetector vs TransNetV2?**
 **Recommendation: PySceneDetect for v1.** Deterministic, dependency-light,
