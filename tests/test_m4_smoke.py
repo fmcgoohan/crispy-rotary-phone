@@ -8,7 +8,9 @@ Slow (real Whisper): the tone+click fixture in transcribed mode asserts the
 DEGENERATE path (no vocals → empty-ish lines, honest coverage, valid
 document); the espeak-ng ground-truth test synthesizes spoken words over a
 click bed and asserts they survive separation + transcription with sane
-timestamps.
+timestamps; the aligned-path test (PLAN §11 M4, LYR-12/TEST-9) supplies
+espeak-ng lyrics as .txt and .lrc and checks anchoring, monotone word
+times, >= 90 % word coverage and double-run byte identity.
 """
 
 from __future__ import annotations
@@ -633,3 +635,129 @@ def test_espeak_ground_truth_transcription(tmp_path, whisper_weights) -> None:
     )
     assert result.exit_code == 0, result.output
     assert (library / track_id / "lyrics.json").read_bytes() == first
+
+
+# --- slow: the aligned (lyrics-file) path on real audio ---------------------
+
+# Four sung lines with known placement (seconds into the mix). Plain,
+# distinct words so the ground truth is unambiguous; gaps between lines
+# keep each one its own vocal-activity region.
+_ALIGNED_LINES = (
+    ("the quick brown fox jumps over the lazy dog", 4.0),
+    ("a bright red kite is flying high above the hill", 10.0),
+    ("we will keep on walking until the morning light", 16.0),
+    ("every river finds its way back home to the sea", 22.0),
+)
+
+
+def _espeak_line(text: str, tmp_path: Path, k: int) -> np.ndarray:
+    raw = tmp_path / f"line{k}_raw.wav"
+    subprocess.run(
+        ["espeak-ng", "-v", "en-us", "-s", "130", "-w", str(raw), text],
+        check=True, capture_output=True,
+    )
+    out = tmp_path / f"line{k}.wav"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(raw),
+         "-ar", str(SAMPLE_RATE), "-ac", "2", str(out)],
+        check=True, capture_output=True,
+    )
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    return y.mean(axis=1)
+
+
+def _lrc_stamp(seconds: float) -> str:
+    return f"[{int(seconds // 60):02d}:{seconds % 60:05.2f}]"
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
+@pytest.mark.parametrize("suffix", [".txt", ".lrc"])
+def test_aligned_path_on_real_audio(tmp_path, whisper_weights, suffix) -> None:
+    """PLAN §11 M4 for the aligned path (LYR-12 / TEST-9): supplied lyrics
+    over real separated + transcribed speech anchor with monotonically
+    increasing word times covering >= 90 % of the supplied words."""
+    seconds = 30.0
+    bed = _click_track(seconds) * 0.25  # quiet generated bed
+    mix = bed.copy()
+    sung: list[tuple[float, float]] = []
+    for k, (text, start) in enumerate(_ALIGNED_LINES):
+        y = _espeak_line(text, tmp_path, k)
+        i = int(start * SAMPLE_RATE)
+        n = min(len(y), len(mix) - i)
+        mix[i : i + n] += 0.6 * y[:n]
+        sung.append((start, start + n / SAMPLE_RATE))
+    wav = tmp_path / "aligned_mix.wav"
+    _write_stereo_wav(wav, mix)
+
+    if suffix == ".txt":
+        body = "[Verse 1]\n" + "\n".join(t for t, _ in _ALIGNED_LINES) + "\n"
+    else:
+        # Hints a little early, as hand-made LRC files usually are.
+        body = "[ar:generated]\n" + "".join(
+            f"{_lrc_stamp(max(start - 0.3, 0.0))}{text}\n"
+            for text, start in _ALIGNED_LINES
+        )
+    lyrics_path = tmp_path / f"lyrics{suffix}"
+    lyrics_path.write_text(body)
+
+    library = tmp_path / "lib"  # fresh library
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[stems]\ndevice = "cpu"\n')
+    lib = ["--library", str(library), "--config", str(cfg)]
+    result = runner.invoke(app, ["ingest", str(wav), "--lyrics", str(lyrics_path), *lib])
+    assert result.exit_code == 0, result.output
+    track_id = next(p.name for p in library.iterdir() if p.is_dir())
+    for stage in ("stems", "features", "lyrics"):
+        result = runner.invoke(app, [stage, track_id, *lib])
+        assert result.exit_code == 0, f"{stage}: {result.output}"
+
+    doc_path = library / track_id / "lyrics.json"
+    doc = json.loads(doc_path.read_text())
+    _validate(doc, "lyrics.schema.json")
+    assert doc["mode"] == "aligned"
+    duration = json.loads(
+        (library / track_id / "audio_features.json").read_text()
+    )["duration_seconds"]
+
+    lines = doc["lines"]
+    assert [l["text"] for l in lines] == [t for t, _ in _ALIGNED_LINES]
+    # Every line carries its file line number: line 0 is the [Verse 1]
+    # header (.txt) or the [ar:] ID tag (.lrc), so sung lines start at 1.
+    assert [l["source_line_index"] for l in lines] == [
+        1 + k for k in range(len(_ALIGNED_LINES))
+    ]
+
+    # >= 90 % of the supplied words carry word timings (anchored lines).
+    supplied = sum(len(t.split()) for t, _ in _ALIGNED_LINES)
+    timed = sum(len(l["words"]) for l in lines if "unaligned" not in l["flags"])
+    assert timed / supplied >= 0.9, (timed, supplied, [l["flags"] for l in lines])
+
+    # Times: inside [0, duration], non-decreasing inside each line and
+    # across the whole document, and each line where it was actually sung.
+    previous = 0.0
+    for line, (s0, s1) in zip(lines, sung):
+        assert 0.0 <= line["start_seconds"] <= line["end_seconds"] <= duration
+        assert line["start_seconds"] >= previous
+        assert s0 - 1.0 <= line["start_seconds"] <= s0 + 1.5, (line, s0)
+        assert line["end_seconds"] <= s1 + 1.5, (line, s1)
+        for w in line["words"]:
+            assert 0.0 <= w["start_seconds"] <= w["end_seconds"] <= duration
+            assert w["start_seconds"] >= previous, (w, previous)
+            previous = w["start_seconds"]
+        previous = max(previous, line["start_seconds"])
+
+    # Whisper heard little that the file does not contain.
+    assert len(doc["unmatched_words"]) <= 3, doc["unmatched_words"]
+    for w in doc["unmatched_words"]:
+        assert 0.0 <= w["start_seconds"] <= w["end_seconds"] <= duration
+
+    # T2: a second run of the stage is byte-identical.
+    first = doc_path.read_bytes()
+    manifest_path = library / track_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["documents"]["lyrics"] = {"status": "pending"}
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    result = runner.invoke(app, ["lyrics", track_id, *lib])
+    assert result.exit_code == 0, result.output
+    assert doc_path.read_bytes() == first
