@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, config, versions
+from . import TOOL_VERSION, config, inputs, versions
 from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import RunMetadata, StemsState
 
@@ -173,8 +173,12 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     def _record(state: StemsState) -> None:
         def apply(m) -> None:
             m.stems = state
-            if state.status == "ok":
-                # No stems digest yet: any fresh separation invalidates consumers.
+            if state.status == "ok" and (
+                prior is None or state.content_sha256 != prior.content_sha256
+            ):
+                # Consumers go stale only when the stems actually changed
+                # (or the old block predates content_sha256): a
+                # byte-identical CPU re-separation keeps them current.
                 mark_dependents_stale(m, "stems")
 
         apply(manifest)
@@ -213,6 +217,9 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             tool_version=TOOL_VERSION,
             device=device,
         )
+        # Identity of what dependents consume (mrw/inputs.py), taken from the
+        # temp dir before the swap and kept even when retain is false.
+        content_sha = inputs.stems_dir_sha256(tmp_dir, STEM_NAMES)
         if cfg.stems.retain:
             if stems_dir.exists():
                 shutil.rmtree(stems_dir)
@@ -231,6 +238,7 @@ def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             StemsState(
                 status="ok",
                 retained=cfg.stems.retain,
+                content_sha256=content_sha,
                 config_hash=stems_hash,
                 algorithm_version=versions.current("stems"),
                 run=run,

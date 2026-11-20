@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, costs, hashing, versions
+from . import TOOL_VERSION, canonical, config, costs, hashing, inputs, versions
 from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     ApiUsage,
@@ -368,6 +368,19 @@ def _resolve_video_path(track_dir: Path, source_doc: dict) -> Path:
     )
 
 
+def _verify_video_identity(video_path: Path, source_doc: dict) -> None:
+    """Refuse a file whose bytes are not the ingested video (DET-3/ORCH-2/
+    VID-5). Hashing is ~1 s/GB, small next to the stage's decode passes."""
+    expected = source_doc["file"]["sha256"]
+    actual = hashing.sha256_file(video_path)
+    if actual != expected:
+        raise PrerequisiteError(
+            f"the file at {video_path} is not the ingested video (sha256 "
+            f"{actual}, expected {expected}) — restore the original there, "
+            "or ingest the new file as a new track"
+        )
+
+
 def run_video(
     track: str, library: Library, cfg: config.Config, estimate_only: bool = False
 ) -> VideoResult:
@@ -381,19 +394,26 @@ def run_video(
         )
     track_dir = library.track_dir(track_id)
     source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
-    video_path = _resolve_video_path(track_dir, source_doc)
 
     vcfg = cfg.video
     video_hash = config.stage_hash(vcfg)
+    inputs_sha = inputs.current_inputs("video", manifest, source_doc)
     prior = manifest.documents.video
     if (
         not estimate_only
         and prior.status == "ok"
         and prior.config_hash == video_hash
         and versions.is_current("video", prior.algorithm_version)
+        and inputs.inputs_match(prior.inputs_sha256, inputs_sha)
         and (track_dir / "video.json").is_file()
     ):
         return VideoResult(track_id, -1, vcfg.caption_backend, None, None, True)
+
+    # Resolved and verified only when the stage will read the file (DET-3):
+    # an up-to-date track whose original moved stays a no-op, and bytes
+    # that are not the ingested video are refused before any analysis.
+    video_path = _resolve_video_path(track_dir, source_doc)
+    _verify_video_identity(video_path, source_doc)
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
@@ -606,6 +626,7 @@ def run_video(
                 content_sha256=content_sha,
                 config_hash=video_hash,
                 algorithm_version=versions.current("video"),
+                inputs_sha256=inputs_sha,
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

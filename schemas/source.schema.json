@@ -14,7 +14,7 @@
       "properties": {
         "original_path": {
           "type": "string",
-          "description": "Absolute path at ingest time. Informational; may go stale — nothing re-reads it."
+          "description": "Absolute path at ingest time. May go stale. The video stage re-reads it when no verified source_video.* copy is in the track dir, and refuses (exit 2) a file whose sha256 differs from sha256 below."
         },
         "filename": { "type": "string" },
         "size_bytes": { "type": "integer", "minimum": 0 },

@@ -41,6 +41,10 @@
           "type": "boolean",
           "description": "false = stems were generated for dependent stages but deleted per config; a re-run of a dependent stage must regenerate them."
         },
+        "content_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256",
+          "description": "Identity of the separated stems: sha256 over the four stem files' sha256 hex digests concatenated in vocals, drums, bass, other order. Recorded on every successful separation, also when retained is false. Consumed by dependents' inputs_sha256. (Added in 1.5.0.)"
+        },
         "config_hash": { "$ref": "#/$defs/config_hash" },
         "algorithm_version": {
           "type": "integer",
@@ -63,7 +67,7 @@
     "status": {
       "type": "string",
       "enum": ["ok", "pending", "failed", "stale", "not_applicable"],
-      "description": "pending = never run; stale = present but out of date — written when an upstream document it was derived from was regenerated with different content (since 1.4.0), and derived by `mrw status` for an ok entry whose config_hash or algorithm_version no longer matches the current config and code; a stale document re-runs and is refused as a prerequisite; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
+      "description": "pending = never run; stale = present but out of date — written when an upstream document it was derived from was regenerated with different content (since 1.4.0), and derived by `mrw status` for an ok entry whose config_hash, algorithm_version or inputs_sha256 no longer matches the current config, code and inputs; a stale document re-runs and is refused as a prerequisite; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
     },
     "config_hash": {
       "type": "string",
@@ -116,6 +120,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "Version of the stage's code that produced this entry (mrw/versions.py). An ok entry whose version differs from the running mrw's is stale. Absent = 1 (entries written before 1.4.0). (Added in 1.4.0.)"
+        },
+        "inputs_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "First 16 hex chars of a sha256 over the identities of the inputs this document was built from (mrw/inputs.py): audio_features ← stems content_sha256 + source audio_stream_sha256; lyrics ← audio_features content_sha256 + stems content_sha256 + source lyrics_input.sha256; video ← source file.sha256. An ok entry whose value differs from the current inputs is stale. Absent (entries written before 1.5.0) counts as matching. (Added in 1.5.0.)"
         },
         "run": { "$ref": "#/$defs/run_metadata" },
         "error": {

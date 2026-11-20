@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, lrc, versions
+from . import TOOL_VERSION, canonical, config, inputs, lrc, versions
 from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
 from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
@@ -527,16 +527,18 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
         )
 
     lyrics_hash = config.stage_hash(cfg.lyrics)
+    source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
+    inputs_sha = inputs.current_inputs("lyrics", manifest, source_doc)
     prior = manifest.documents.lyrics
     if (
         prior.status == "ok"
         and prior.config_hash == lyrics_hash
         and versions.is_current("lyrics", prior.algorithm_version)
+        and inputs.inputs_match(prior.inputs_sha256, inputs_sha)
         and (track_dir / "lyrics.json").is_file()
     ):
         return LyricsResult(track_id, "?", -1, -1, already_done=True)
 
-    source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
     features_doc = json.loads(
         (track_dir / "audio_features.json").read_text(encoding="utf-8")
     )
@@ -663,6 +665,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                 content_sha256=content_sha,
                 config_hash=lyrics_hash,
                 algorithm_version=versions.current("lyrics"),
+                inputs_sha256=inputs_sha,
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

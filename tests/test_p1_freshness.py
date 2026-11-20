@@ -123,11 +123,32 @@ def test_successful_stems_run_marks_features_and_lyrics_stale(tmp_path, monkeypa
     assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
     assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
     _ok_lyrics(library, track_id)
-    # Re-separate under a new config (e.g. another model/thread count).
+    # Re-separate under a new config (e.g. another model/thread count) with
+    # byte-identical output: consumers stay current (P1 inputs tracking).
     cfg.write_text('[stems]\ndevice = "cpu"\ncpu_threads = 2\n')
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
+    assert _doc_status(library, track_id, "audio_features") == "ok"
+    # Different stems → new stems content_sha256 → dependents go stale.
+    monkeypatch.setattr(mrw.stems, "_separate",
+                        lambda flac, out_dir, model, device, cpu_threads=1:
+                        _noisy_stems(out_dir))
+    cfg.write_text('[stems]\ndevice = "cpu"\ncpu_threads = 3\n')
     assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
     assert _doc_status(library, track_id, "audio_features") == "stale"
     assert _doc_status(library, track_id, "lyrics") == "stale"
+
+
+def _noisy_stems(out_dir: Path) -> None:
+    import numpy as np
+    import soundfile as sf
+
+    from mrw.stems import STEM_NAMES
+
+    rng = np.random.default_rng(0)
+    for name in STEM_NAMES:
+        sf.write(out_dir / f"{name}.flac",
+                 rng.integers(-3000, 3000, (44100, 2)).astype("int16"),
+                 44100, subtype="PCM_16")
 
 
 def test_lyrics_and_video_records_stale_structure():

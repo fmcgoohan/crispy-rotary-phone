@@ -31,12 +31,13 @@ the double-run byte-identity smoke test is the standing evidence.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, versions
+from . import TOOL_VERSION, canonical, config, inputs, versions
 from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     AudioFeaturesDocument,
@@ -298,11 +299,14 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
         )
 
     features_hash = config.stage_hash(cfg.features)
+    source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
+    inputs_sha = inputs.current_inputs("audio_features", manifest, source_doc)
     prior = manifest.documents.audio_features
     if (
         prior.status == "ok"
         and prior.config_hash == features_hash
         and versions.is_current("audio_features", prior.algorithm_version)
+        and inputs.inputs_match(prior.inputs_sha256, inputs_sha)
         and (track_dir / "audio_features.json").is_file()
     ):
         return FeaturesResult(track_id, 0.0, -1, already_done=True)
@@ -359,6 +363,7 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
                 content_sha256=content_sha,
                 config_hash=features_hash,
                 algorithm_version=versions.current("audio_features"),
+                inputs_sha256=inputs_sha,
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),

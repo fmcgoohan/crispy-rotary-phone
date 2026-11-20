@@ -268,17 +268,29 @@ def status(
 ) -> None:
     """List tracks and per-document statuses.
 
-    A document recorded `ok` under a different config, or by an older
-    version of its stage's code (mrw/versions.py), is displayed as `stale`
-    — derived here from the stored config_hash and algorithm_version; the
+    A document recorded `ok` under a different config, by an older
+    version of its stage's code (mrw/versions.py), or from inputs that have
+    since changed (mrw/inputs.py), is displayed as `stale` — derived here
+    from the stored config_hash, algorithm_version and inputs_sha256; the
     manifest itself is never rewritten by this command (review 006, note 2).
     """
+    import json as _json
+
+    from . import inputs
+
     cfg = _load_config(config_path)
+    manifest = None
+    source_doc = None
 
     def _display(name: str, entry) -> str:
         status = entry.status
         if status != "ok":
             return status
+        if source_doc is not None and not inputs.inputs_match(
+            getattr(entry, "inputs_sha256", None),
+            inputs.current_inputs(name, manifest, source_doc),
+        ):
+            return "stale"
         section = config.STAGE_SECTION.get(name)
         stored_hash = entry.config_hash
         if stored_hash and section:
@@ -297,6 +309,12 @@ def status(
         manifest = lib.read_manifest(track_id)
         if manifest is None:
             continue
+        try:
+            source_doc = _json.loads(
+                (lib.track_dir(track_id) / "source.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            source_doc = None
         docs = manifest.documents
         parts = [
             "source=" + _display("source", docs.source),
