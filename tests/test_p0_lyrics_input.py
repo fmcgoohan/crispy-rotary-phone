@@ -146,3 +146,52 @@ def test_compressed_markup_line_marks_every_occurrence():
     assert [(m.label, m.hint_seconds) for m in markup] == [
         ("chorus", 10.0), ("verse", 40.0), ("chorus", 90.0)]
     assert {m.source_line_index for m in markup if m.label == "chorus"} == {0}
+
+
+def test_pinned_revision_reaches_download_model(tmp_path, monkeypatch):
+    import faster_whisper.utils
+
+    from mrw.lyrics import fetch_whisper_model, resolve_whisper_model
+    from mrw.whisper_models import WHISPER_MODELS
+
+    calls = []
+
+    def fake_download(name, **kwargs):
+        calls.append((name, kwargs))
+        return str(tmp_path / "snap")
+
+    monkeypatch.setattr(faster_whisper.utils, "download_model", fake_download)
+    resolve_whisper_model("small")
+    fetch_whisper_model("small")
+    pinned = WHISPER_MODELS["small"][1]
+    assert [c[1]["revision"] for c in calls] == [pinned, pinned]
+    assert calls[0][1]["local_files_only"] is True
+    assert not calls[1][1].get("local_files_only")
+
+
+def test_local_model_directory_is_used_as_is(tmp_path, monkeypatch):
+    import faster_whisper.utils
+
+    from mrw.lyrics import fetch_whisper_model, resolve_whisper_model
+
+    monkeypatch.setattr(faster_whisper.utils, "download_model",
+                        lambda *a, **k: pytest.fail("must not download"))
+    model_dir = tmp_path / "local-model"
+    model_dir.mkdir()
+    assert resolve_whisper_model(str(model_dir)) == str(model_dir)
+    assert fetch_whisper_model(str(model_dir)) == model_dir
+
+
+def test_local_model_path_is_stored_absolute(tmp_path, monkeypatch):
+    from mrw.config import LyricsConfig
+
+    (tmp_path / "m").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert LyricsConfig(model="m").model == str(tmp_path / "m")
+
+
+def test_markup_in_hint_order_when_all_hinted():
+    _, markup = parse_supplied_lyrics("[01:00.00][Chorus]\n[00:10.00][Verse 1]\nla\n")
+    assert [m.label for m in markup] == ["verse", "chorus"]
+    _, markup = parse_supplied_lyrics("[Chorus]\n[00:10.00][Verse 1]\nla\n")
+    assert [m.label for m in markup] == ["chorus", "verse"]  # file order
