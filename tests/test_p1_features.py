@@ -216,3 +216,50 @@ def test_no_beats_inside_beatless_pads() -> None:
     assert len(times) >= 25
     assert times.min() >= 12.0 - 0.05 and times.max() <= 28.0 + 0.05
     assert tempo.confidence >= 0.8
+
+
+# --- (c) degenerate inputs ------------------------------------------------------------
+
+
+def test_silent_mix_fails_stage_and_keeps_prior_document(tmp_path: Path) -> None:
+    silence = np.zeros(4 * SAMPLE_RATE, dtype=np.float32)
+    library = tmp_path / "lib"
+    track_id = _fabricate_track(library, silence, {}, tmp_path)
+    # A prior document from an older config: the failed re-run must not touch it.
+    prior = library / track_id / "audio_features.json"
+    prior.write_text('{"prior": true}\n')
+    mpath = library / track_id / "manifest.json"
+    manifest = json.loads(mpath.read_text())
+    manifest["documents"]["audio_features"] = {
+        "status": "ok", "path": "audio_features.json", "config_hash": "f" * 16}
+    mpath.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    result = runner.invoke(app, ["features", track_id, "--library", str(library)])
+    assert result.exit_code == 1, result.output
+    assert "no beat evidence in mix" in result.output
+    assert "Traceback" not in result.output
+    entry = json.loads(mpath.read_text())["documents"]["audio_features"]
+    assert entry["status"] == "failed"
+    assert "no beat evidence in mix" in entry["error"]
+    assert prior.read_text() == '{"prior": true}\n'
+
+
+def test_sub_block_input_does_not_crash(tmp_path: Path) -> None:
+    mix = _click_track(0.3)  # one click at 0.25 s; under pyloudnorm's 400 ms block
+    library = tmp_path / "lib"
+    track_id = _fabricate_track(library, mix, {"drums": mix}, tmp_path)
+    result = runner.invoke(app, ["features", track_id, "--library", str(library)])
+    assert result.exit_code == 0, result.output
+    doc = json.loads((library / track_id / "audio_features.json").read_text())
+    _validate(doc)
+    assert doc["duration_seconds"] == 0.3
+    assert doc["tempo"]["bpm_global"] > 0
+    assert -70.0 < doc["loudness"]["integrated_lufs"] < 0.0
+
+
+def test_single_block_loudness_matches_sine_level() -> None:
+    # A 0.3 s 1 kHz sine of peak 0.1 in both channels: K-weighting is ~0 dB
+    # at 1 kHz, so LUFS ≈ -0.691 + 20·log10(0.1) = -20.69.
+    y = _tone(0.3, 1000.0, 0.1)
+    lufs = features._integrated_lufs(np.stack([y, y], axis=1))
+    assert abs(lufs - (-20.69)) < 1.0

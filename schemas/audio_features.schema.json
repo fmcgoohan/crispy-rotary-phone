@@ -16,7 +16,7 @@
         "bpm_global": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here."
+          "description": "Single representative tempo. Tempo drift shows up in the beat grid itself, not here. Always > 0: a mix with no beat evidence (digital silence, or no beats tracked) fails the features stage (manifest status failed) instead of writing a document, so consumers may divide by this value."
         },
         "confidence": {
           "$ref": "common.schema.json#/$defs/confidence",
@@ -38,7 +38,7 @@
         "downbeat_offset": {
           "type": "integer",
           "minimum": 0,
-          "description": "Index into times of the first downbeat; downbeats are then every beats_per_bar-th beat."
+          "description": "Index into times of the first downbeat; downbeats are then every beats_per_bar-th beat. With fewer than beats_per_bar beats no phase fit runs and this is 0."
         },
         "downbeat_method": {
           "type": "string",
@@ -53,7 +53,7 @@
       "properties": {
         "integrated_lufs": {
           "type": "number",
-          "description": "EBU R128 integrated loudness of the mix; use to normalize levels across tracks."
+          "description": "EBU R128 integrated loudness of the mix; use to normalize levels across tracks. A fully silent program is clamped to -70.0 (the R128 absolute gate). Input shorter than one 400 ms gating block is measured as a single block spanning the whole signal."
         }
       }
     },

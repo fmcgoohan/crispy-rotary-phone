@@ -6,6 +6,8 @@ Reviewed conventions implemented here:
 - Tempo/beat grid computed once on the mix (librosa beat_track, trim=True:
   no beats through beatless intros/outros); tempo.confidence is the beats'
   onset support against 1/3- and 2/3-beat probes (FEAT-3, _beat_confidence).
+  A mix with no beat evidence (digital silence, no beats tracked) fails the
+  stage rather than writing bpm_global 0.0 (DET-11/SCH-9, H3).
 - Downbeats via
   `assumed_4_4_phase_fit` (OQ-4) — the beat phase (0..3) maximizing mean
   onset strength, ties to the lowest phase.
@@ -22,7 +24,8 @@ Reviewed conventions implemented here:
   onsets remain (R-9) — always so for a channel at the floor throughout.
 - loudness: EBU R128 integrated LUFS; a fully-silent program returns -inf
   from the meter and is clamped to -70.0 (the R128 absolute gate) so the
-  document stays valid JSON.
+  document stays valid JSON; input shorter than one 400 ms block is
+  measured as a single block spanning the signal (FEAT-8).
 - vocal_activity: hysteresis over the vocal stem's rms_db with the params
   embedded in the document (R-5 / OQ-5).
 
@@ -260,6 +263,11 @@ def _beats_and_tempo(y_mix, phase_fit_window_seconds: float) -> tuple[Tempo, Bea
     import numpy as np
 
     env = librosa.onset.onset_strength(y=y_mix, sr=SAMPLE_RATE, hop_length=HOP)
+    if not env.any():
+        raise FeaturesError(
+            "no beat evidence in mix (no onset energy: silent or constant signal); "
+            "no beat grid can be written"
+        )
     # trim=True (librosa's default): beats over weak leading/trailing onset
     # strength are dropped, so beatless intros and outros carry no invented
     # grid (FEAT-3). Interior breakdowns are not trimmed — confidence (and a
@@ -268,6 +276,13 @@ def _beats_and_tempo(y_mix, phase_fit_window_seconds: float) -> tuple[Tempo, Bea
         onset_envelope=env, sr=SAMPLE_RATE, hop_length=HOP, trim=True
     )
     bpm = float(np.atleast_1d(bpm)[0])
+    if len(beat_frames) == 0 or canonical.round_bpm(bpm) <= 0.0:
+        # Contract-preserving H3 choice (DET-11/SCH-9): bpm_global keeps its
+        # exclusiveMinimum 0 promise; the stage fails instead of writing 0.0.
+        raise FeaturesError(
+            "no beat evidence in mix (the beat tracker found no beats); "
+            "no beat grid can be written"
+        )
     beat_times = librosa.frames_to_time(beat_frames, sr=SAMPLE_RATE, hop_length=HOP)
     confidence = _beat_confidence(env, beat_frames)
 
@@ -303,10 +318,24 @@ def _beats_and_tempo(y_mix, phase_fit_window_seconds: float) -> tuple[Tempo, Bea
 
 
 def _integrated_lufs(stereo) -> float:
+    import math
+
     import numpy as np
     import pyloudnorm
 
-    lufs = pyloudnorm.Meter(SAMPLE_RATE).integrated_loudness(stereo.astype(np.float64))
+    n = stereo.shape[0]
+    block = 0.400  # BS.1770 gating block
+    if n < block * SAMPLE_RATE:
+        # Shorter than one 400 ms block: pyloudnorm refuses the input
+        # (FEAT-8). Measure it as a single block spanning the whole signal
+        # (same K-weighting and -70 absolute gate, no relative gating — one
+        # block has nothing to gate against). Nudged down an ulp so the
+        # library's length check (n >= block * rate) holds exactly.
+        block = n / SAMPLE_RATE
+        while block * SAMPLE_RATE > n:
+            block = math.nextafter(block, 0.0)
+    meter = pyloudnorm.Meter(SAMPLE_RATE, block_size=block)
+    lufs = meter.integrated_loudness(stereo.astype(np.float64))
     if not np.isfinite(lufs):
         lufs = -70.0  # R128 absolute gate: silent program, not -inf
     return canonical.round_db(max(lufs, -70.0))
