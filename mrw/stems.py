@@ -175,16 +175,24 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     t0 = time.monotonic()
     tmp_dir = track_dir / ".stems.tmp"
     mps_fallback_error: str | None = None
+    # Set once the ok block is committed: an interrupt landing after that
+    # (before the return) must not overwrite it with failed (review A-2).
+    recorded = False
+    # Identity of the stems that dependents can see on disk — what a failed
+    # block carries forward (review A-1). Becomes the new content once the
+    # new stems replace the old ones.
+    on_disk_sha = prior.content_sha256 if prior else None
 
     def _record(state: StemsState) -> None:
         def apply(m) -> None:
             m.stems = state
-            if state.status == "ok" and (
-                prior is None or state.content_sha256 != prior.content_sha256
-            ):
-                # Consumers go stale only when the stems actually changed
-                # (or the old block predates content_sha256): a
-                # byte-identical CPU re-separation keeps them current.
+            if state.content_sha256 != (prior.content_sha256 if prior else None):
+                # Consumers go stale only when the stems on disk actually
+                # changed (or the old block predates content_sha256): a
+                # byte-identical CPU re-separation keeps them current. Keyed
+                # on content, not status: a run interrupted after its stems
+                # replaced the old ones records failed with the new identity
+                # and must still flip them (review A-1).
                 mark_dependents_stale(m, "stems")
 
         apply(manifest)
@@ -239,6 +247,7 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 # retain flipped true→false: drop the previously-retained
                 # stems too, so `retained: false` reflects disk reality (H2).
                 shutil.rmtree(stems_dir)
+        on_disk_sha = content_sha
 
         _record(
             StemsState(
@@ -255,6 +264,7 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 ),
             )
         )
+        recorded = True
         return StemsResult(
             track_id=track_id,
             device=device,
@@ -267,6 +277,8 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     except BaseException as exc:  # fail loudly, never leave partial stems/
         # BaseException (SEC-9): an interrupted run is recorded as failed
         # too, then the interruption itself propagates unwrapped.
+        if recorded:
+            raise
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
         if mps_fallback_error:
@@ -284,6 +296,11 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             StemsState(
                 status="failed",
                 retained=cfg.stems.retain,
+                # The stems on disk are unchanged by the failure, so their
+                # identity carries forward (review A-1): dependents built
+                # from them stay current, and an identical re-separation
+                # after this failure does not mark them stale.
+                content_sha256=on_disk_sha,
                 config_hash=stems_hash,
                 error=message[:500],
             )

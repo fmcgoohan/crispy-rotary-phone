@@ -43,7 +43,7 @@
         },
         "content_sha256": {
           "$ref": "common.schema.json#/$defs/sha256",
-          "description": "Identity of the separated stems: sha256 over the four stem files' sha256 hex digests concatenated in vocals, drums, bass, other order. Recorded on every successful separation, also when retained is false. Consumed by dependents' inputs_sha256. (Added in 1.5.0.)"
+          "description": "Identity of the separated stems: sha256 over the four stem files' sha256 hex digests concatenated in vocals, drums, bass, other order. Recorded on every successful separation, also when retained is false. A failed block carries forward the identity of the stems still on disk (absent if none were ever recorded). Consumed by dependents' inputs_sha256. (Added in 1.5.0.)"
         },
         "config_hash": { "$ref": "#/$defs/config_hash" },
         "algorithm_version": {
@@ -139,7 +139,7 @@
         "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
         "content_sha256": {
           "$ref": "common.schema.json#/$defs/sha256",
-          "description": "Hash of the document file as written — the determinism-audit handle."
+          "description": "Hash of the document file as written — the determinism-audit handle. On a failed entry: the hash of the document still on disk from the last write, carried forward so its dependents stay current (absent if none was ever written)."
         },
         "config_hash": { "$ref": "#/$defs/config_hash" },
         "algorithm_version": {

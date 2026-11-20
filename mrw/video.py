@@ -442,12 +442,18 @@ def _run_video(
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
     backend = None  # visible to the failure path for partial-spend recording
+    recorded = False
+    # Identity of the document on disk — what a failed entry carries
+    # forward (review A-1); the new one once it has been written.
+    on_disk_sha = prior.content_sha256
 
     def _record(entry: DocumentEntry) -> None:
         def apply(m) -> None:
             m.documents.video = entry
             append_api_ledger(m, "video", entry.status, entry.run)
-            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+            # Keyed on the document on disk changing, not on status: a
+            # failed entry carries the on-disk identity forward (review A-1).
+            if entry.content_sha256 != prior.content_sha256:
                 mark_dependents_stale(m, "video")
 
         apply(manifest)
@@ -636,6 +642,7 @@ def _run_video(
             _shutil.rmtree(frames_dir)
         frames_tmp.rename(frames_dir)
         content_sha = library.write_document(track_id, "video.json", document)
+        on_disk_sha = content_sha
 
         usage = None
         if vcfg.caption_backend != "null":
@@ -660,6 +667,7 @@ def _run_video(
                 ),
             )
         )
+        recorded = True
         return VideoResult(
             track_id, len(shots), vcfg.caption_backend, estimate, usage, False
         )
@@ -668,7 +676,11 @@ def _run_video(
     except BaseException as exc:
         # BaseException (SEC-9): an interrupted run still records failed
         # with its partial spend (and ledger entry), then the interruption
-        # propagates unwrapped.
+        # propagates unwrapped. Not after the ok entry is committed: that
+        # would mark a good video.json failed and append its spend to the
+        # ledger a second time (review A-2).
+        if recorded:
+            raise
         import shutil as _shutil
 
         _shutil.rmtree(track_dir / ".frames.tmp", ignore_errors=True)
@@ -676,6 +688,11 @@ def _run_video(
         _record(
             DocumentEntry(
                 status="failed",
+                # The document on disk is unchanged by the failure, so its
+                # identity carries forward (review A-1): dependents built
+                # from it stay current, and an identical re-run does not
+                # mark them stale.
+                content_sha256=on_disk_sha,
                 config_hash=video_hash,
                 run=(
                     RunMetadata(

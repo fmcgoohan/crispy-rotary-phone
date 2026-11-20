@@ -305,3 +305,137 @@ def test_truncated_copy_is_ignored_for_the_original(tmp_path):
     result = runner.invoke(app, ["video", track_id, "--library", str(library)])
     assert result.exit_code == 2
     assert "not the ingested video" in result.output
+
+
+# --- failed entries keep the on-disk identity (review A-1) ------------------------
+
+
+def _stems_features_track(tmp_path: Path, monkeypatch):
+    import mrw.stems
+    from test_m2_field_fixes import _fake_stems
+
+    wav = tmp_path / "t.wav"
+    _make_wav(wav)
+    library = tmp_path / "lib"
+    track_id = _ingest(wav, library)
+    monkeypatch.setattr(mrw.stems, "_separate",
+                        lambda flac, out_dir, model, device, cpu_threads=1: _fake_stems(out_dir))
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[stems]\ndevice = "cpu"\n')
+    lib = ["--library", str(library), "--config", str(cfg)]
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
+    assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
+    return library, track_id, cfg, lib
+
+
+def test_interrupted_stems_keeps_dependents_current(tmp_path, monkeypatch):
+    import mrw.stems
+
+    library, track_id, cfg, lib = _stems_features_track(tmp_path, monkeypatch)
+    good = _manifest(library, track_id)["stems"]["content_sha256"]
+
+    def interrupted(flac, out_dir, model, device, cpu_threads=1):
+        raise KeyboardInterrupt
+
+    real = mrw.stems._separate
+    monkeypatch.setattr(mrw.stems, "_separate", interrupted)
+    cfg.write_text('[stems]\ndevice = "cpu"\ncpu_threads = 2\n')
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 130
+    stems = _manifest(library, track_id)["stems"]
+    assert stems["status"] == "failed"
+    assert stems["content_sha256"] == good  # stems/ on disk are unchanged
+    assert "features=ok" in runner.invoke(app, ["status", *lib]).output
+
+    # The identical re-separation after the failure keeps features current.
+    monkeypatch.setattr(mrw.stems, "_separate", real)
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 0
+    m = _manifest(library, track_id)
+    assert m["stems"]["content_sha256"] == good
+    assert m["documents"]["audio_features"]["status"] == "ok"
+
+
+def test_interrupt_after_stems_swap_records_new_identity(tmp_path, monkeypatch):
+    import mrw.stems
+    import mrw.versions
+    from test_p1_freshness import _noisy_stems
+
+    library, track_id, cfg, lib = _stems_features_track(tmp_path, monkeypatch)
+    good = _manifest(library, track_id)["stems"]["content_sha256"]
+    monkeypatch.setattr(mrw.stems, "_separate",
+                        lambda flac, out_dir, model, device, cpu_threads=1:
+                        _noisy_stems(out_dir))
+
+    def interrupted(stage):  # after the swap, before the ok block is recorded
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mrw.versions, "current", interrupted)
+    cfg.write_text('[stems]\ndevice = "cpu"\ncpu_threads = 2\n')
+    assert runner.invoke(app, ["stems", track_id, *lib]).exit_code == 130
+    m = _manifest(library, track_id)
+    assert m["stems"]["status"] == "failed"
+    from mrw import inputs
+    from mrw.stems import STEM_NAMES
+
+    on_disk = inputs.stems_dir_sha256(library / track_id / "stems", STEM_NAMES)
+    assert m["stems"]["content_sha256"] == on_disk != good
+    assert m["documents"]["audio_features"]["status"] == "stale"
+
+
+def test_failed_features_keeps_previous_document_identity(tmp_path, monkeypatch):
+    import mrw.features
+
+    library, track_id = _features_track(tmp_path)
+    lib = ["--library", str(library)]
+    assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
+    good = _manifest(library, track_id)["documents"]["audio_features"]["content_sha256"]
+
+    def broken(path):
+        raise RuntimeError("decode failed")
+
+    monkeypatch.setattr(mrw.features, "_load", broken)
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text("[features]\nphase_fit_window_seconds = 0.07\n")
+    result = runner.invoke(app, ["features", track_id, *lib, "--config", str(cfg)])
+    assert result.exit_code == 1
+    entry = _manifest(library, track_id)["documents"]["audio_features"]
+    assert entry["status"] == "failed" and entry["content_sha256"] == good
+
+
+# --- an interrupt after the ok entry is committed (review A-2) ---------------------
+
+
+def test_interrupt_after_commit_keeps_ok_entry_and_single_ledger_entry(
+    tmp_path, monkeypatch
+):
+    import mrw.video
+
+    library, track_id = _video_track(tmp_path)
+    paid = tmp_path / "paid.toml"
+    paid.write_text('[video]\ncaption_backend = "anthropic"\n')
+    _use_backend(monkeypatch, _Backend())
+
+    def late_interrupt(*args, **kwargs):  # the `return VideoResult(...)` line
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mrw.video, "VideoResult", late_interrupt)
+    result = runner.invoke(
+        app, ["video", track_id, "--library", str(library), "--config", str(paid)])
+    assert result.exit_code == 130, result.output
+    m = _manifest(library, track_id)
+    assert m["documents"]["video"]["status"] == "ok"
+    assert [(e["status"], e["calls"]) for e in m["api_ledger"]] == [("ok", 1)]
+
+
+def test_interrupt_after_commit_keeps_ok_features(tmp_path, monkeypatch):
+    import mrw.features
+
+    library, track_id = _features_track(tmp_path)
+
+    def late_interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mrw.features, "FeaturesResult", late_interrupt)
+    result = runner.invoke(app, ["features", track_id, "--library", str(library)])
+    assert result.exit_code == 130, result.output
+    entry = _manifest(library, track_id)["documents"]["audio_features"]
+    assert entry["status"] == "ok" and "error" not in entry

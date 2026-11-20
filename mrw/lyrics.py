@@ -553,11 +553,17 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
+    recorded = False
+    # Identity of the document on disk — what a failed entry carries
+    # forward (review A-1); the new one once it has been written.
+    on_disk_sha = prior.content_sha256
 
     def _record(entry: DocumentEntry) -> None:
         def apply(m) -> None:
             m.documents.lyrics = entry
-            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+            # Keyed on the document on disk changing, not on status: a
+            # failed entry carries the on-disk identity forward (review A-1).
+            if entry.content_sha256 != prior.content_sha256:
                 mark_dependents_stale(m, "lyrics")
 
         apply(manifest)
@@ -663,6 +669,7 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
             coverage=coverage,
         )
         content_sha = library.write_document(track_id, "lyrics.json", document)
+        on_disk_sha = content_sha
         _record(
             DocumentEntry(
                 status="ok",
@@ -680,6 +687,7 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
                 ),
             )
         )
+        recorded = True
         return LyricsResult(
             track_id=track_id,
             mode=mode,
@@ -692,9 +700,20 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
     except BaseException as exc:
         # BaseException (SEC-9): interruptions are recorded as failed too,
         # then propagate unwrapped.
+        if recorded:  # ok entry already committed (review A-2)
+            raise
         message = failure_message(exc)[:500]
         _record(
-            DocumentEntry(status="failed", config_hash=lyrics_hash, error=message)
+            DocumentEntry(
+                status="failed",
+                # The document on disk is unchanged by the failure, so its
+                # identity carries forward (review A-1): dependents built
+                # from it stay current, and an identical re-run does not
+                # mark them stale.
+                content_sha256=on_disk_sha,
+                config_hash=lyrics_hash,
+                error=message,
+            )
         )
         if not isinstance(exc, Exception):
             raise
