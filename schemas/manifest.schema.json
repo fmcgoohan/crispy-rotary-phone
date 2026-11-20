@@ -63,7 +63,7 @@
     "status": {
       "type": "string",
       "enum": ["ok", "pending", "failed", "stale", "not_applicable"],
-      "description": "pending = never run; stale = present but produced under a different config_hash than current config; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
+      "description": "pending = never run; stale = present but out of date — written when an upstream document it was derived from was regenerated with different content (since 1.4.0), and derived by `mrw status` for an ok entry whose config_hash or algorithm_version no longer matches the current config and code; a stale document re-runs and is refused as a prerequisite; not_applicable = e.g. video stage on an audio-only track. Absence of a document file is disambiguated by this field."
     },
     "config_hash": {
       "type": "string",

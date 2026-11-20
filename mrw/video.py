@@ -30,7 +30,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, costs, hashing, versions
-from .library import Library, PrerequisiteError
+from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     ApiUsage,
     CaptionBackendInfo,
@@ -400,8 +400,13 @@ def run_video(
     backend = None  # visible to the failure path for partial-spend recording
 
     def _record(entry: DocumentEntry) -> None:
-        manifest.documents.video = entry
-        library.write_manifest(track_id, manifest)
+        def apply(m) -> None:
+            m.documents.video = entry
+            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+                mark_dependents_stale(m, "video")
+
+        apply(manifest)
+        library.update_manifest(track_id, apply)
 
     def _accrued_usage(estimated: costs.CostEstimate | None):
         """Real spend so far — recorded even on failure (PR #12 round 3):
