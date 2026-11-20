@@ -20,7 +20,9 @@ AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
 LYRICS_SCHEMA_VERSION = "1.1.0"
-VIDEO_SCHEMA_VERSION = "1.0.0"
+# video 1.1.0: additive — `timing` (offset of the video clock from the audio
+# origin, vfr indicator); every time now on the audio timeline (VID-2).
+VIDEO_SCHEMA_VERSION = "1.1.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -230,10 +232,16 @@ class Shot(BaseModel):
     caption: Optional[ShotCaption] = None
 
 
+class VideoTiming(BaseModel):
+    offset_seconds: float
+    vfr: bool
+
+
 class VideoDocument(BaseModel):
     schema_version: str = VIDEO_SCHEMA_VERSION
     track_id: str
     video_span: Interval
+    timing: Optional[VideoTiming] = None
     detector: Detector
     caption_backend: CaptionBackendInfo
     shots: list[Shot]

@@ -1,5 +1,17 @@
 """Stage 5 — video analysis (PLAN §4 stage 5); contract:
-schemas/video.schema.json v1.0.0 (frozen). Video inputs only.
+schemas/video.schema.json v1.1.0. Video inputs only.
+
+Timeline (VID-2): every time in video.json is on the unified audio
+timeline — t = 0 is the first sample of source_audio.flac, i.e. the
+presentation time of the first decoded frame of the audio stream ingest
+chose (ingest.select_audio_stream). Video frame times come from a
+presentation-time table of the analysed video stream (ffprobe packet pts,
+demux only, sorted): frame index i (decode/presentation order, the `n` of
+ffmpeg's select filter) is at pts[i] − t0. Nothing assumes a constant
+frame rate, so VFR sources get exact indices and times; the offset applied
+and a vfr indicator are recorded in the document. Frames presented before
+t = 0 (video that starts before the audio) are outside the timeline and
+excluded from the shots.
 
 Shot detection: PySceneDetect ContentDetector (OQ-8). Per shot:
 representative frames (midpoint <4 s; 1/3 and 2/3 otherwise), CIELab
@@ -21,6 +33,7 @@ Determinism (D5 extension — JPEG byte stability is load-bearing):
 
 from __future__ import annotations
 
+import bisect
 import json
 import subprocess
 import time
@@ -43,6 +56,7 @@ from .models import (
     RunMetadata,
     Shot,
     VideoDocument,
+    VideoTiming,
 )
 
 JPEG_QUALITY = 90
@@ -52,6 +66,13 @@ MOTION_WIDTH = 320
 PALETTE_K = 5
 PALETTE_MAX_DIM = 256
 LONG_SHOT_SECONDS = 4.0
+# A frame-interval deviation from the median beyond this fraction marks the
+# stream VFR. Container timebase rounding (e.g. Matroska's 1 ms: 41/42 ms at
+# 24 fps) stays far below it; a 30→15 fps switch or a dropped frame does not.
+VFR_TOLERANCE = 0.1
+# Frames up to half a millisecond before t = 0 round to 0.000 and stay on
+# the timeline; anything earlier precedes the audio and is excluded.
+ORIGIN_SLOP_SECONDS = 0.0005
 
 
 class VideoError(RuntimeError):
@@ -85,18 +106,148 @@ def representative_times(start: float, end: float) -> list[float]:
 
 
 def normalize_shots(
-    boundaries: list[tuple[int, int]], fps: float
+    boundaries: list[tuple[int, int]], frame_times: list[float]
 ) -> list[tuple[int, int, float, float]]:
     """(start_frame, end_frame) list → sorted, contiguous, gap-free
-    partition with exclusive end_frame and frame-derived times."""
+    partition with exclusive end_frame. Times come from `frame_times`
+    (seconds on the unified timeline, len = frame count + 1: entry i is
+    frame i's presentation time, the last entry the end of the last frame),
+    never from frame/fps — the stream may be VFR (VID-2)."""
     out = []
-    for i, (s, e) in enumerate(sorted(boundaries)):
+    for s, e in sorted(boundaries):
         if out and s != out[-1][1]:
             raise VideoError(f"shot partition has a gap/overlap at frame {s}")
         if e <= s:
             raise VideoError(f"empty shot at frame {s}")
-        out.append((s, e, canonical.round_seconds(s / fps), canonical.round_seconds(e / fps)))
+        if e >= len(frame_times):
+            raise VideoError(f"shot ends at frame {e}, past the last frame")
+        out.append((s, e, frame_times[s], frame_times[e]))
     return out
+
+
+def frame_table_from_packets(
+    packets: list[dict], fallback_fps: float
+) -> tuple[list[float], float]:
+    """(sorted presentation times, end of the last frame) on the container
+    clock, from ffprobe `packet` entries of ONE video stream.
+
+    Demux only — no decode. Packets flagged discard ('D', e.g. before an
+    MP4 edit-list start) are never output by the decoder and are skipped.
+    Packets without pts fall back to dts; a stream with no timestamps at
+    all is synthesised at `fallback_fps` from 0 (CFR assumption).
+    """
+    frames: list[tuple[float, float]] = []  # (pts, duration or 0)
+    n_output = 0
+    missing = False  # any packet without pts/dts → synthesise the table
+    for pkt in packets:
+        if "D" in (pkt.get("flags") or ""):
+            continue
+        n_output += 1
+        t = pkt.get("pts_time", pkt.get("dts_time"))
+        if t in (None, "N/A"):
+            missing = True
+            continue
+        d = pkt.get("duration_time")
+        frames.append((float(t), float(d) if d not in (None, "N/A") else 0.0))
+    if missing or not frames:
+        if n_output == 0 or fallback_fps <= 0:
+            raise VideoError("video stream has no frames with timestamps")
+        return [i / fallback_fps for i in range(n_output)], n_output / fallback_fps
+    frames.sort()
+    times = [t for t, _ in frames]
+    # Length of the last frame: its own packet duration, else the last
+    # frame interval (VFR-safe — never an average rate), else 1/avg fps.
+    last = frames[-1][1]
+    if last <= 0:
+        if len(times) > 1 and times[-1] > times[-2]:
+            last = times[-1] - times[-2]
+        else:
+            last = 1.0 / fallback_fps if fallback_fps > 0 else 0.04
+    return times, times[-1] + last
+
+
+def is_vfr(pts: list[float]) -> bool:
+    """True when frame intervals are not constant (beyond timebase
+    rounding): any interval deviates from the median by more than
+    VFR_TOLERANCE of it."""
+    intervals = [b - a for a, b in zip(pts, pts[1:])]
+    if len(intervals) < 2:
+        return False
+    median = sorted(intervals)[len(intervals) // 2]
+    if median <= 0:
+        return True
+    return any(abs(i - median) > VFR_TOLERANCE * median for i in intervals)
+
+
+@dataclass(frozen=True)
+class Timeline:
+    """The analysed video stream's frames placed on the unified timeline.
+
+    pts: sorted presentation times (container clock), one per frame;
+    end: end of the last frame (container clock);
+    origin: container time of the first sample of source_audio.flac (t0).
+    """
+
+    pts: list[float]
+    end: float
+    origin: float
+
+    @property
+    def n_frames(self) -> int:
+        return len(self.pts)
+
+    @property
+    def first_frame(self) -> int:
+        """First frame presented at or after t = 0 (earlier frames precede
+        the audio and are outside the timeline)."""
+        return bisect.bisect_left(self.pts, self.origin - ORIGIN_SLOP_SECONDS)
+
+    @property
+    def offset_seconds(self) -> float:
+        """First video frame's time minus the audio origin (may be < 0)."""
+        return canonical.round_seconds(self.pts[0] - self.origin)
+
+    def frame_times(self) -> list[float]:
+        """Document times (3 dp, clamped at 0) for frames 0..n−1 plus the
+        end of the last frame — the table normalize_shots consumes."""
+        return [
+            canonical.round_seconds(max(0.0, t - self.origin))
+            for t in [*self.pts, self.end]
+        ]
+
+    def index_near(self, container_time: float) -> int:
+        """Frame whose pts is nearest to a container-clock time (ties →
+        earlier frame)."""
+        i = bisect.bisect_left(self.pts, container_time)
+        if i == 0:
+            return 0
+        if i == len(self.pts):
+            return len(self.pts) - 1
+        before, after = self.pts[i - 1], self.pts[i]
+        return i - 1 if container_time - before <= after - container_time else i
+
+
+def shot_bounds(cut_indices: list[int], first: int, n_frames: int) -> list[tuple[int, int]]:
+    """Frame-index partition [first, n_frames) split at the given cuts.
+
+    The last shot ends at n_frames — the frames that exist in the stream —
+    never at a container-duration estimate (VID-11)."""
+    if first >= n_frames:
+        raise VideoError("no video frames at or after audio t = 0")
+    cuts = sorted({c for c in cut_indices if first < c < n_frames})
+    edges = [first, *cuts, n_frames]
+    return list(zip(edges, edges[1:]))
+
+
+def representative_index(frame_times: list[float], s: int, e: int, t: float) -> int:
+    """Frame in [s, e) whose time is nearest t (ties → earlier frame).
+    Clamped to the shot, hence to the frames that exist."""
+    i = bisect.bisect_left(frame_times, t, s, e)
+    if i >= e:
+        return e - 1
+    if i > s and t - frame_times[i - 1] <= frame_times[i] - t:
+        return i - 1
+    return i
 
 
 def palette_sample(frame):
@@ -242,41 +393,122 @@ def _display_dims(stream: dict) -> tuple[int, int]:
     return width, height
 
 
-def _video_stream_info(path: Path) -> tuple[float, int, int, int]:
+@dataclass(frozen=True)
+class VideoStreamInfo:
+    index: int  # container stream index of the analysed video stream
+    width: int  # display (post-rotation) dimensions of decoded frames
+    height: int
+    fps: float  # average frame rate — sizing hints only, never timing
+    start_time: float  # stream start_time (container clock)
+
+
+def _ffprobe_json(args: list[str], what: str) -> dict:
     try:
         proc = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-print_format",
-             "json", "-show_streams", "-show_format", str(path)],
+            ["ffprobe", "-v", "error", "-print_format", "json", *args],
             capture_output=True,
-            timeout=120,  # header read only; longer means a hung process
+            timeout=300,  # demux/header work only; longer means a hung process
         )
     except subprocess.TimeoutExpired as e:
-        raise VideoError("ffprobe timed out after 120 s") from e
+        raise VideoError(f"ffprobe ({what}) timed out after 300 s") from e
     if proc.returncode != 0:
-        raise VideoError(f"ffprobe failed: {proc.stderr.decode()[:300]}")
-    info = json.loads(proc.stdout)
+        raise VideoError(f"ffprobe ({what}) failed: {proc.stderr.decode()[:300]}")
+    return json.loads(proc.stdout)
+
+
+def _video_stream_info(path: Path) -> VideoStreamInfo:
+    info = _ffprobe_json(["-show_streams", str(path)], "streams")
     stream = next(
-        s for s in info["streams"]
-        if s.get("codec_type") == "video"
-        and not s.get("disposition", {}).get("attached_pic")
+        (
+            s for s in info["streams"]
+            if s.get("codec_type") == "video"
+            and not s.get("disposition", {}).get("attached_pic")
+        ),
+        None,
     )
-    fps = float(Fraction(stream["avg_frame_rate"]))
+    if stream is None:
+        raise VideoError("no video stream (cover art is not video)")
+    try:
+        fps = float(Fraction(stream.get("avg_frame_rate", "0/1")))
+    except (ValueError, ZeroDivisionError):
+        fps = 0.0
     width, height = _display_dims(stream)
-    nb = stream.get("nb_frames")
-    frame_count = int(nb) if nb else int(round(float(info["format"]["duration"]) * fps))
-    return fps, width, height, frame_count
+    start = stream.get("start_time")
+    return VideoStreamInfo(
+        index=int(stream["index"]),
+        width=width,
+        height=height,
+        fps=fps,
+        start_time=float(start) if start not in (None, "N/A") else 0.0,
+    )
 
 
-def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int):
-    """Single sequential decode; exact frame indices via the select filter."""
+def _frame_table(path: Path, stream: VideoStreamInfo) -> tuple[list[float], float]:
+    """Presentation-time table of the analysed stream: ffprobe packet pts,
+    demux only (no decode), sorted — see frame_table_from_packets."""
+    info = _ffprobe_json(
+        ["-select_streams", str(stream.index),
+         "-show_entries", "packet=pts_time,dts_time,duration_time,flags",
+         str(path)],
+        "packets",
+    )
+    return frame_table_from_packets(info.get("packets", []), stream.fps)
+
+
+def _audio_origin(path: Path, audio_index: int) -> float:
+    """Container time of the first sample of source_audio.flac: the pts of
+    the first frame the decoder outputs for the audio stream ingest decoded.
+
+    Decoded, not the stream's start_time: priming samples dropped through
+    discard packets / skip_samples shift the first output sample, and the
+    FLAC (audio-only output) starts exactly there with no padding. Only the
+    first few packets are read."""
+    info = _ffprobe_json(
+        ["-select_streams", str(audio_index), "-read_intervals", "%+#16",
+         "-show_frames", "-show_streams", str(path)],
+        "audio origin",
+    )
+    times = []
+    for fr in info.get("frames", []):
+        t = fr.get("best_effort_timestamp_time", fr.get("pts_time"))
+        if t not in (None, "N/A"):
+            times.append(float(t))
+    if times:
+        return min(times)
+    for st in info.get("streams", []):
+        if st.get("start_time") not in (None, "N/A"):
+            return float(st["start_time"])
+    return 0.0
+
+
+def _audio_stream_index(path: Path, source_doc: dict) -> int:
+    """The audio stream ingest decoded: recorded in source.json from 1.1.0;
+    for older tracks, the same selection rule re-applied to the file."""
+    recorded = source_doc.get("media", {}).get("audio", {}).get("stream_index")
+    if recorded is not None:
+        return int(recorded)
+    from .ingest import select_audio_stream
+
+    streams = _ffprobe_json(["-show_streams", str(path)], "streams")["streams"]
+    chosen, _ = select_audio_stream(streams)
+    if chosen is None:
+        raise VideoError("no audio stream — the unified timeline has no origin")
+    return int(chosen["index"])
+
+
+def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int,
+                        stream_index: int | None = None):
+    """Single sequential decode; exact frame indices via the select filter
+    (its `n` is the decoder's output order — the frame table's order)."""
     import numpy as np
 
     if not indices:
         return {}
     expr = "+".join(f"eq(n\\,{i})" for i in sorted(set(indices)))
+    mapping = ["-map", f"0:{stream_index}"] if stream_index is not None else []
     proc = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path),
-         "-vf", f"select='{expr}'", "-vsync", "0",
+        ["ffmpeg", "-v", "error", "-i", str(path), *mapping,
+         "-vf", f"select='{expr}'", "-fps_mode", "passthrough",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         capture_output=True,
     )
@@ -287,7 +519,8 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int)
     wanted = len(set(indices))
     if len(raw) != wanted * frame_bytes:
         # A size mismatch means the frame geometry is wrong (rotation,
-        # aspect, mid-stream resize) — reshaping would scramble pixels.
+        # aspect, mid-stream resize) or the stream decoded fewer frames
+        # than its packet table — reshaping would scramble pixels.
         raise VideoError(
             f"decode returned {len(raw)} bytes for {wanted} frames of "
             f"{width}x{height}; expected {wanted * frame_bytes}"
@@ -295,24 +528,33 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int)
     frames = {}
     for slot, idx in enumerate(sorted(set(indices))):
         chunk = raw[slot * frame_bytes : (slot + 1) * frame_bytes]
-        if len(chunk) < frame_bytes:
-            raise VideoError(f"decode returned too few frames (wanted {idx})")
         frames[idx] = np.frombuffer(chunk, dtype=np.uint8).reshape(height, width, 3)
     return frames
 
 
-def _motion_pass(path: Path, w0: int, h0: int) -> tuple[list[float], list[float]]:
-    """12 fps / 320 px grayscale sequential decode → per-pair magnitudes.
+def _motion_pass(path: Path, w0: int, h0: int, stream_index: int | None = None,
+                 first_frame_seconds: float = 0.0) -> tuple[list[float], list[float]]:
+    """12 fps / 320 px grayscale sequential decode → per-pair magnitudes
+    and the pairs' times on the unified timeline.
 
     (w0, h0) are the display (post-rotation) dimensions from
     _video_stream_info, so the scale keeps the true aspect ratio.
+    `first_frame_seconds` is the analysed stream's first frame on the
+    unified timeline (Timeline.pts[0] − origin, unrounded). The decode is
+    re-based to that frame (setpts=PTS-STARTPTS) and timestamps pass
+    through untouched (-fps_mode passthrough), so ffmpeg never pads the
+    head with copies of the first frame to reach the file's t = 0 (the
+    VID-2 motion/shot origin skew): sample k is at first_frame_seconds +
+    k / MOTION_FPS — the same clock as the shots.
     """
     import numpy as np
 
     height = max(2, round(MOTION_WIDTH * h0 / w0 / 2) * 2)
+    mapping = ["-map", f"0:{stream_index}"] if stream_index is not None else []
     proc = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path),
-         "-vf", f"fps={MOTION_FPS},scale={MOTION_WIDTH}:{height}",
+        ["ffmpeg", "-v", "error", "-i", str(path), *mapping,
+         "-vf", f"setpts=PTS-STARTPTS,fps={MOTION_FPS},scale={MOTION_WIDTH}:{height}",
+         "-fps_mode", "passthrough",
          "-f", "rawvideo", "-pix_fmt", "gray", "-"],
         capture_output=True,
     )
@@ -326,29 +568,35 @@ def _motion_pass(path: Path, w0: int, h0: int) -> tuple[list[float], list[float]
         for i in range(n)
     )
     values = motion_stats(frames, MOTION_WIDTH, height)
-    pair_times = [(i + 0.5) / MOTION_FPS for i in range(len(values))]
+    pair_times = [
+        first_frame_seconds + (i + 0.5) / MOTION_FPS for i in range(len(values))
+    ]
     return values, pair_times
 
 
-def _detect_shots(path: Path, vcfg: config.VideoConfig, fps: float,
-                  frame_count: int) -> list[tuple[int, int]]:
+def _detect_cuts(path: Path, vcfg: config.VideoConfig, stream: VideoStreamInfo,
+                 timeline: Timeline) -> list[int]:
+    """Frame indices where ContentDetector starts a new shot.
+
+    Scenedetect 0.7 positions are PTS-derived (OpenCV CAP_PROP_POS_MSEC,
+    relative to the stream's start_time); their frame_num is only an
+    average-rate approximation on VFR input, so it is never used. Each cut
+    time is mapped back to the container clock and to the nearest frame of
+    the packet table."""
     from scenedetect import ContentDetector, detect
 
+    fps = stream.fps if stream.fps > 0 else 24.0
     min_len_frames = max(1, round(vcfg.min_shot_seconds * fps))
     scenes = detect(
         str(path),
         ContentDetector(threshold=vcfg.detector_threshold,
                         min_scene_len=min_len_frames),
+        start_in_scene=True,
     )
-    if not scenes:
-        return [(0, frame_count)]
-    bounds = [(s.frame_num, e.frame_num) for s, e in scenes]
-    # Guarantee full coverage of the stream.
-    if bounds[0][0] != 0:
-        bounds[0] = (0, bounds[0][1])
-    if bounds[-1][1] < frame_count:
-        bounds[-1] = (bounds[-1][0], frame_count)
-    return bounds
+    return [
+        timeline.index_near(stream.start_time + start.seconds)
+        for start, _ in scenes[1:]
+    ]
 
 
 # --- the stage -----------------------------------------------------------------
@@ -434,9 +682,20 @@ def run_video(
             make_backend,
         )
 
-        fps, src_w, src_h, frame_count = _video_stream_info(video_path)
-        bounds = _detect_shots(video_path, vcfg, fps, frame_count)
-        shots_raw = normalize_shots(bounds, fps)
+        stream = _video_stream_info(video_path)
+        src_w, src_h = stream.width, stream.height
+        pts, end = _frame_table(video_path, stream)
+        timeline = Timeline(
+            pts=pts,
+            end=end,
+            origin=_audio_origin(
+                video_path, _audio_stream_index(video_path, source_doc)
+            ),
+        )
+        frame_times = timeline.frame_times()
+        cuts = _detect_cuts(video_path, vcfg, stream, timeline)
+        bounds = shot_bounds(cuts, timeline.first_frame, timeline.n_frames)
+        shots_raw = normalize_shots(bounds, frame_times)
 
         # PR #12 round 4 [minor]: a $0 null-backend estimate needs only the
         # shot count — return before any frame extraction/JPEG work.
@@ -451,10 +710,13 @@ def run_video(
         for s_frame, e_frame, s_t, e_t in shots_raw:
             times = representative_times(s_t, e_t)
             plan.append(
-                [min(int(round(t * fps)), e_frame - 1) for t in times]
+                [representative_index(frame_times, s_frame, e_frame, t)
+                 for t in times]
             )
         all_indices = sorted({i for shot in plan for i in shot})
-        frames_rgb = _extract_frames_rgb(video_path, all_indices, src_w, src_h)
+        frames_rgb = _extract_frames_rgb(
+            video_path, all_indices, src_w, src_h, stream.index
+        )
         jpegs = {i: encode_jpeg(frames_rgb[i]) for i in all_indices}
         shas = {i: hashing.sha256_bytes(jpegs[i]) for i in all_indices}
 
@@ -502,7 +764,10 @@ def run_video(
                 )
 
         backend, cache = make_backend(vcfg, track_dir / ".cache" / "captions")
-        motion_values, motion_times = _motion_pass(video_path, src_w, src_h)
+        motion_values, motion_times = _motion_pass(
+            video_path, src_w, src_h, stream.index,
+            timeline.pts[0] - timeline.origin,
+        )
 
         # PR #12 review [major]: frames are written to a temp dir and
         # swapped in whole on success (the stems temp-dir-and-rename
@@ -526,7 +791,7 @@ def run_video(
                 (frames_tmp / name).write_bytes(jpegs[frame_idx])
                 reps.append(
                     RepresentativeFrame(
-                        time_seconds=canonical.round_seconds(frame_idx / fps),
+                        time_seconds=frame_times[frame_idx],
                         path=f"frames/{name}",
                         sha256=shas[frame_idx],
                     )
@@ -557,7 +822,11 @@ def run_video(
         document = VideoDocument(
             track_id=track_id,
             video_span=Interval(
-                start_seconds=0.0, end_seconds=shots_raw[-1][3]
+                start_seconds=shots_raw[0][2], end_seconds=shots_raw[-1][3]
+            ),
+            timing=VideoTiming(
+                offset_seconds=timeline.offset_seconds,
+                vfr=is_vfr(timeline.pts),
             ),
             detector=Detector(
                 name="pyscenedetect_content",

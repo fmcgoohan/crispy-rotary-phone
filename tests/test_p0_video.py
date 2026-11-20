@@ -89,7 +89,8 @@ def _rotated_clip(tmp_path):
 @needs_ffmpeg
 def test_rotated_video_frames_have_display_geometry(tmp_path):
     clip = _rotated_clip(tmp_path)
-    fps, w, h, n = _video_stream_info(clip)
+    info = _video_stream_info(clip)
+    w, h = info.width, info.height
     assert (w, h) == (180, 320)  # portrait, not the stored 320x180
     frame = _extract_frames_rgb(clip, [0], w, h)[0]
     assert frame.shape == (320, 180, 3)
