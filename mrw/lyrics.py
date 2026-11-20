@@ -6,10 +6,10 @@ Mode `aligned` when the track was ingested with a lyrics file, else
 ISOLATED vocal stem (OQ-7), deterministic decode (greedy, temperature 0);
 language detection runs on a window of the earliest vocal-activity audio,
 never a silent stem head (review 007 finding 1), with provenance in
-engine.language_source. Alignment: rapidfuzz anchoring of supplied lines to
-the Whisper word stream (OQ-6, mrw/align.py — pure logic, unit-tested
-without Whisper); `.lrc` timestamps are search-window hints only. Supplied
-markup handled per R-3.
+engine.language_source. Alignment: global monotone rapidfuzz alignment of
+supplied lines to the Whisper word stream (OQ-6, mrw/align.py — pure logic,
+unit-tested without Whisper); `.lrc` timestamps are offset-corrected cost
+hints, never trusted outright. Supplied markup handled per R-3.
 
 Honesty machinery: the seven schema line flags with thresholds from
 LyricsConfig; `untranscribed_regions` = uncovered spans — word-covered
@@ -591,7 +591,10 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
             supplied_lines, markup_entries = parse_supplied_lyrics(raw)
             supplied_markup = markup_entries or None
             anchored = align_lines(
-                supplied_lines, all_words, cfg.lyrics.min_anchor_score
+                supplied_lines,
+                all_words,
+                cfg.lyrics.min_anchor_score,
+                duration=duration,
             )
             for a in anchored:
                 words = _words_from_pairs(a.words)

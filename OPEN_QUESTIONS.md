@@ -72,6 +72,16 @@ search-window hints only). Known weakness: passages Whisper can't transcribe
 can't anchor the supplied text either — those lines surface as `unaligned`
 with interpolated timing rather than fake precision.
 
+**Resolution (analysis findings LYR-1, LYR-2, LYR-8; lyrics algorithm 4):**
+still Whisper-anchor with rapidfuzz, but the greedy per-line search is
+replaced by a global monotone line-level alignment (the Needleman-Wunsch
+style PLAN §4 describes): a cleaner later chorus could capture an earlier
+chorus's lines. `.lrc` timestamps are no longer a −5/+20 s search window
+but a capped cost term, applied after a global hint offset is estimated
+from unambiguous anchors — so files synced to a different version of the
+song still help. Word timings inside an anchored line come from content
+pairing, never position; inferred word times carry `timing_interpolated`.
+
 **OQ-7 — Whisper engine: faster-whisper (CPU) vs mlx-whisper (Apple GPU/ANE)?**
 **Recommendation: faster-whisper, model `small`, int8.** Mature word
 timestamps, deterministic decode, and transcription is not the pipeline
