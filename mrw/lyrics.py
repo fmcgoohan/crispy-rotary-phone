@@ -40,7 +40,7 @@ from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, inputs, lrc, versions
 from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import (
     DocumentEntry,
     LyricsCoverage,
@@ -689,10 +689,13 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException (SEC-9): interruptions are recorded as failed too,
+        # then propagate unwrapped.
+        message = failure_message(exc)[:500]
         _record(
-            DocumentEntry(
-                status="failed", config_hash=lyrics_hash, error=str(exc)[:500]
-            )
+            DocumentEntry(status="failed", config_hash=lyrics_hash, error=message)
         )
-        raise LyricsError(str(exc)[:500]) from exc
+        if not isinstance(exc, Exception):
+            raise
+        raise LyricsError(message) from exc

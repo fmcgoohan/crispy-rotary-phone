@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import TOOL_VERSION, config, inputs, versions
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import RunMetadata, StemsState
 
 STEM_NAMES = ("vocals", "drums", "bass", "other")
@@ -264,7 +264,9 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:  # fail loudly, never leave partial stems/
+    except BaseException as exc:  # fail loudly, never leave partial stems/
+        # BaseException (SEC-9): an interrupted run is recorded as failed
+        # too, then the interruption itself propagates unwrapped.
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
         if mps_fallback_error:
@@ -274,10 +276,10 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
             # CPU-side detail (round 3): 200 + 250 + framing < 500.
             message = (
                 f"cpu retry failed after mps failure ({mps_fallback_error}): "
-                f"{str(exc)[:250]}"
+                f"{failure_message(exc)[:250]}"
             )
         else:
-            message = str(exc)
+            message = failure_message(exc)
         _record(
             StemsState(
                 status="failed",
@@ -286,4 +288,6 @@ def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
                 error=message[:500],
             )
         )
+        if not isinstance(exc, Exception):
+            raise
         raise StemsError(message[:500]) from exc

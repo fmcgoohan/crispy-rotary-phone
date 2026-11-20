@@ -30,7 +30,13 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, costs, hashing, inputs, versions
-from .library import Library, PrerequisiteError, append_api_ledger, mark_dependents_stale
+from .library import (
+    Library,
+    PrerequisiteError,
+    append_api_ledger,
+    failure_message,
+    mark_dependents_stale,
+)
 from .models import (
     ApiUsage,
     CaptionBackendInfo,
@@ -355,7 +361,13 @@ def _detect_shots(path: Path, vcfg: config.VideoConfig, fps: float,
 
 
 def _resolve_video_path(track_dir: Path, source_doc: dict) -> Path:
-    copies = sorted(track_dir.glob("source_video.*"))
+    # A copy is used only when its size matches the ingested file: a
+    # truncated leftover (from before copies were atomic) is ignored in
+    # favour of the original (SEC-9). Its bytes are then verified by
+    # _verify_video_identity like any other candidate.
+    size = source_doc["file"]["size_bytes"]
+    copies = [p for p in sorted(track_dir.glob("source_video.*"))
+              if p.is_file() and p.stat().st_size == size]
     if copies:
         return copies[0]
     original = Path(source_doc["file"]["original_path"])
@@ -652,7 +664,10 @@ def _run_video(
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException (SEC-9): an interrupted run still records failed
+        # with its partial spend (and ledger entry), then the interruption
+        # propagates unwrapped.
         import shutil as _shutil
 
         _shutil.rmtree(track_dir / ".frames.tmp", ignore_errors=True)
@@ -671,7 +686,9 @@ def _run_video(
                     if partial
                     else None
                 ),
-                error=str(exc)[:500],
+                error=failure_message(exc)[:500],
             )
         )
+        if not isinstance(exc, Exception):
+            raise
         raise VideoError(str(exc)[:500]) from exc

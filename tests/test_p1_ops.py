@@ -171,3 +171,137 @@ def test_ledger_absent_without_spend(tmp_path):
     track_id = _ingest(wav, library)
     Library(library).update_manifest(track_id, lambda m: None)
     assert "api_ledger" not in _manifest(library, track_id)  # absent, not []
+
+
+# --- interruption ----------------------------------------------------------------
+
+
+def test_interrupt_mid_captioning_records_failed_and_spend(tmp_path, monkeypatch):
+    library, track_id = _video_track(tmp_path)
+    paid = tmp_path / "paid.toml"
+    paid.write_text('[video]\ncaption_backend = "anthropic"\n')
+    _use_backend(monkeypatch, _Backend(boom=KeyboardInterrupt()))
+    result = runner.invoke(
+        app, ["video", track_id, "--library", str(library), "--config", str(paid)])
+    assert result.exit_code == 130, result.output
+    assert "interrupted" in result.output
+    m = _manifest(library, track_id)
+    entry = m["documents"]["video"]
+    assert entry["status"] == "failed"
+    assert entry["error"] == "interrupted (KeyboardInterrupt)"
+    assert entry["run"]["api_usage"]["calls"] == 1  # paid call kept
+    assert m["api_ledger"][0]["status"] == "failed"
+    assert not (library / track_id / ".frames.tmp").exists()
+
+
+def _features_track(tmp_path: Path) -> tuple[Path, str]:
+    from test_m3_smoke import _click_track, _fabricate_track
+
+    mix = _click_track(3.0)
+    library = tmp_path / "lib"
+    return library, _fabricate_track(library, mix, {"drums": mix}, tmp_path)
+
+
+def test_sigterm_during_stage_is_recorded_and_exits_130(tmp_path, monkeypatch):
+    import os
+    import signal
+
+    import mrw.features
+
+    library, track_id = _features_track(tmp_path)
+
+    def killed(path):
+        os.kill(os.getpid(), signal.SIGTERM)
+        raise AssertionError("SIGTERM was not turned into KeyboardInterrupt")
+
+    monkeypatch.setattr(mrw.features, "_load", killed)
+    before = signal.getsignal(signal.SIGTERM)
+    result = runner.invoke(app, ["features", track_id, "--library", str(library)])
+    assert result.exit_code == 130, result.output
+    assert "error: interrupted" in result.output
+    entry = _manifest(library, track_id)["documents"]["audio_features"]
+    assert entry["status"] == "failed"
+    assert entry["error"] == "interrupted (KeyboardInterrupt)"
+    assert signal.getsignal(signal.SIGTERM) is before  # handler restored
+
+
+def test_interrupted_stems_records_failed_and_cleans_tmp(tmp_path, monkeypatch):
+    import mrw.stems
+
+    wav = tmp_path / "t.wav"
+    _make_wav(wav)
+    library = tmp_path / "lib"
+    track_id = _ingest(wav, library)
+
+    def interrupted(flac, out_dir, model, device, cpu_threads=1):
+        (out_dir / "vocals.flac").write_bytes(b"partial")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mrw.stems, "_separate", interrupted)
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[stems]\ndevice = "cpu"\n')
+    result = runner.invoke(
+        app, ["stems", track_id, "--library", str(library), "--config", str(cfg)])
+    assert result.exit_code == 130, result.output
+    stems = _manifest(library, track_id)["stems"]
+    assert stems["status"] == "failed"
+    assert stems["error"] == "interrupted (KeyboardInterrupt)"
+    assert not (library / track_id / ".stems.tmp").exists()
+    assert not (library / track_id / "stems").exists()
+
+
+# --- atomic copy_video -------------------------------------------------------------
+
+
+def test_interrupted_video_copy_leaves_nothing_behind(tmp_path, monkeypatch):
+    import mrw.ingest
+    from test_p1_inputs import _tiny_video
+
+    mp4 = tmp_path / "clip.mp4"
+    _tiny_video(mp4, "red")
+    library = tmp_path / "lib"
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text("[ingest]\ncopy_video = true\n")
+
+    real_copy = mrw.ingest.shutil.copyfile
+
+    def partial_copy(src, dst):
+        Path(dst).write_bytes(Path(src).read_bytes()[:1000])
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mrw.ingest.shutil, "copyfile", partial_copy)
+    result = runner.invoke(
+        app, ["ingest", str(mp4), "--library", str(library), "--config", str(cfg)])
+    assert result.exit_code == 130, result.output
+    track_dir = next(library.iterdir())
+    assert not list(track_dir.glob("source_video*"))
+    assert not (track_dir / ".source_video.tmp").exists()
+
+    monkeypatch.setattr(mrw.ingest.shutil, "copyfile", real_copy)
+    result = runner.invoke(
+        app, ["ingest", str(mp4), "--library", str(library), "--config", str(cfg)])
+    assert result.exit_code == 0, result.output
+    copy = track_dir / "source_video.mp4"
+    assert copy.read_bytes() == mp4.read_bytes()
+
+
+def test_truncated_copy_is_ignored_for_the_original(tmp_path):
+    from mrw.video import _resolve_video_path
+    from test_p1_inputs import _tiny_video
+
+    mp4 = tmp_path / "clip.mp4"
+    _tiny_video(mp4, "red")
+    library = tmp_path / "lib"
+    track_id = _ingest(mp4, library)
+    track_dir = library / track_id
+    (track_dir / "source_video.mp4").write_bytes(mp4.read_bytes()[:500])
+    source = json.loads((track_dir / "source.json").read_text())
+    assert _resolve_video_path(track_dir, source) == mp4
+
+    # A same-size copy with other bytes is picked, then refused by identity.
+    data = bytearray(mp4.read_bytes())
+    data[-1] ^= 0xFF
+    (track_dir / "source_video.mp4").write_bytes(bytes(data))
+    result = runner.invoke(app, ["video", track_id, "--library", str(library)])
+    assert result.exit_code == 2
+    assert "not the ingested video" in result.output

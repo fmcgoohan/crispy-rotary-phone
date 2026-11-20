@@ -1,20 +1,67 @@
-"""mrw CLI. Exit codes: 0 success, 1 stage failure, 2 bad invocation."""
+"""mrw CLI. Exit codes: 0 success, 1 stage failure, 2 bad invocation,
+130 interrupted (Ctrl-C, SIGTERM, SIGHUP)."""
 
 from __future__ import annotations
 
+import contextlib
+import signal
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import typer
+from typer.core import TyperGroup
 
 from . import __version__, config, versions
 from .library import Library
+
+EXIT_INTERRUPTED = 130  # 128 + SIGINT, the shell convention
+
+
+def _raise_keyboard_interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
+@contextlib.contextmanager
+def _signals_as_keyboard_interrupt() -> Iterator[None]:
+    """SIGTERM/SIGHUP (a closed terminal, `kill`, a batch supervisor) used
+    to kill the process with no cleanup, so a running stage never recorded
+    failed and its partial API spend vanished (SEC-9). While a command
+    runs they raise KeyboardInterrupt, which every stage's failure path
+    records before re-raising. Previous handlers are restored afterwards
+    (also keeps in-process test runners unaffected)."""
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            previous[sig] = signal.signal(sig, _raise_keyboard_interrupt)
+        except ValueError:  # not the main thread: leave signals alone
+            pass
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+class _InterruptibleGroup(TyperGroup):
+    """Maps an interruption to exit 130 with one line, instead of click's
+    generic "Aborted!" with exit 1 (indistinguishable from a stage
+    failure)."""
+
+    def invoke(self, ctx):
+        with _signals_as_keyboard_interrupt():
+            try:
+                return super().invoke(ctx)
+            except KeyboardInterrupt:
+                typer.echo("error: interrupted", err=True)
+                raise typer.Exit(EXIT_INTERRUPTED) from None
+
 
 app = typer.Typer(
     name="mrw",
     help="Music Reinterpretation Workbench — analysis pipeline.",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
+    cls=_InterruptibleGroup,
 )
 
 _LIBRARY_OPT = typer.Option(

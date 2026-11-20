@@ -101,6 +101,15 @@ def append_api_ledger(
     manifest.api_ledger.append(_ledger_entry(stage, status, run))
 
 
+def failure_message(exc: BaseException) -> str:
+    """The `error` text for a failed run. Interruptions (KeyboardInterrupt,
+    which the CLI also raises for SIGTERM/SIGHUP — SEC-9) carry no message
+    of their own, so they are named explicitly."""
+    if not isinstance(exc, Exception):
+        return f"interrupted ({type(exc).__name__})"
+    return str(exc)
+
+
 class PrerequisiteError(RuntimeError):
     """Bad invocation / missing prerequisites — nothing recorded; exit 2."""
 

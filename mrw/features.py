@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, inputs, versions
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import (
     AudioFeaturesDocument,
     Beats,
@@ -385,12 +385,17 @@ def _run_features(track: str, library: Library, cfg: config.Config) -> FeaturesR
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException (SEC-9): interruptions are recorded as failed too,
+        # then propagate unwrapped.
+        message = failure_message(exc)[:500]
         _record(
             DocumentEntry(
                 status="failed",
                 config_hash=features_hash,
-                error=str(exc)[:500],
+                error=message,
             )
         )
-        raise FeaturesError(str(exc)[:500]) from exc
+        if not isinstance(exc, Exception):
+            raise
+        raise FeaturesError(message) from exc

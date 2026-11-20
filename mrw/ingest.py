@@ -8,6 +8,7 @@ no-op.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
@@ -171,6 +172,36 @@ def _lyrics_input(lyrics_path: Path, track_dir: Path) -> LyricsInput:
     )
 
 
+VIDEO_COPY_TMP = ".source_video.tmp"
+
+
+def copy_video_atomic(media_path: Path, track_dir: Path, expected_sha: str) -> Path:
+    """Copy the video into the track dir as source_video<ext>, atomically.
+
+    The copy used to be written straight to its final name, so an ENOSPC
+    or Ctrl-C part-way through left a truncated source_video.* that the
+    video stage later preferred over the intact original (ORCH-2/SEC-9).
+    Now it goes to a temp name in the track dir (same filesystem) and is
+    os.replace'd into place only when complete; the temp file is removed
+    on any failure or interruption. The temp copy is hashed and must match
+    expected_sha (the ingested file's) before it is moved into place.
+    """
+    dest = track_dir / f"source_video{media_path.suffix.lower()}"
+    tmp = track_dir / VIDEO_COPY_TMP
+    try:
+        shutil.copyfile(media_path, tmp)
+        if hashing.sha256_file(tmp) != expected_sha:
+            raise IngestError(
+                f"copy of {media_path} does not hash to the ingested video "
+                "(file changed during the copy?)"
+            )
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return dest
+
+
 def ingest(
     media_path: Path,
     library: Library,
@@ -241,9 +272,7 @@ def ingest(
     # artifact (like stems), not a document — the video stage prefers
     # source_video.* over file.original_path when present.
     if has_video and cfg.ingest.copy_video:
-        shutil.copyfile(
-            media_path, track_dir / f"source_video{media_path.suffix.lower()}"
-        )
+        copy_video_atomic(media_path, track_dir, file_sha)
 
     source_doc = SourceDocument(
         track_id=track_id,
