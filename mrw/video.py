@@ -34,6 +34,7 @@ Determinism (D5 extension — JPEG byte stability is load-bearing):
 from __future__ import annotations
 
 import bisect
+import itertools
 import json
 import subprocess
 import time
@@ -170,7 +171,7 @@ def is_vfr(pts: list[float]) -> bool:
     """True when frame intervals are not constant (beyond timebase
     rounding): any interval deviates from the median by more than
     VFR_TOLERANCE of it."""
-    intervals = [b - a for a, b in zip(pts, pts[1:])]
+    intervals = [b - a for a, b in itertools.pairwise(pts)]
     if len(intervals) < 2:
         return False
     median = sorted(intervals)[len(intervals) // 2]
@@ -236,7 +237,7 @@ def shot_bounds(cut_indices: list[int], first: int, n_frames: int) -> list[tuple
         raise VideoError("no video frames at or after audio t = 0")
     cuts = sorted({c for c in cut_indices if first < c < n_frames})
     edges = [first, *cuts, n_frames]
-    return list(zip(edges, edges[1:]))
+    return list(itertools.pairwise(edges))
 
 
 def representative_index(frame_times: list[float], s: int, e: int, t: float) -> int:
@@ -421,6 +422,7 @@ def _ffprobe_json(args: list[str], what: str) -> dict:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-print_format", "json", *args],
             capture_output=True,
+            check=False,
             timeout=300,  # demux/header work only; longer means a hung process
         )
     except subprocess.TimeoutExpired as e:
@@ -525,6 +527,7 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int,
          "-vf", f"select='{expr}'", "-fps_mode", "passthrough",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         capture_output=True,
+        check=False,
     )
     if proc.returncode != 0:
         raise VideoError(f"frame extraction failed: {proc.stderr.decode()[:300]}")
@@ -572,6 +575,7 @@ def _motion_pass(path: Path, w0: int, h0: int, stream_index: int | None = None,
          "-fps_mode", "passthrough",
          "-f", "rawvideo", "-pix_fmt", "gray", "-"],
         capture_output=True,
+        check=False,
     )
     if proc.returncode != 0:
         raise VideoError(f"motion pass failed: {proc.stderr.decode()[:300]}")

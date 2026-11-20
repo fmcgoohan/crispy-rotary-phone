@@ -11,6 +11,7 @@ noise textures) — no media is checked in.
 
 from __future__ import annotations
 
+import itertools
 import json
 import shutil
 import subprocess
@@ -22,6 +23,14 @@ from typer.testing import CliRunner
 
 from mrw import ingest
 from mrw.cli import app
+from mrw.video import (
+    Timeline,
+    VideoError,
+    frame_table_from_packets,
+    is_vfr,
+    representative_index,
+    shot_bounds,
+)
 
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -32,7 +41,9 @@ runner = CliRunner()
 
 
 def _ffmpeg(*args: str) -> None:
-    proc = subprocess.run(["ffmpeg", "-v", "error", "-y", *args], capture_output=True)
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", *args], capture_output=True, check=False
+    )
     assert proc.returncode == 0, proc.stderr.decode()[:600]
 
 
@@ -108,16 +119,6 @@ def test_ingest_without_default_flag_takes_first_audio_stream(tmp_path: Path) ->
 
 # --- VID-2 / VID-11: pure timeline helpers ---------------------------------------
 
-from mrw.video import (  # noqa: E402
-    Timeline,
-    VideoError,
-    frame_table_from_packets,
-    is_vfr,
-    representative_index,
-    shot_bounds,
-)
-
-
 def test_frame_table_sorts_skips_discard_and_uses_last_duration() -> None:
     packets = [  # decode order (B-frames): pts not monotonic
         {"pts_time": "0.500000", "duration_time": "0.033333", "flags": "K__"},
@@ -189,7 +190,7 @@ def _run_video(media: Path, library: Path) -> dict:
     shots = doc["shots"]
     assert shots[0]["start_seconds"] == doc["video_span"]["start_seconds"]
     assert shots[-1]["end_seconds"] == doc["video_span"]["end_seconds"]
-    for a, b in zip(shots, shots[1:]):
+    for a, b in itertools.pairwise(shots):
         assert a["end_frame"] == b["start_frame"]
         assert a["end_seconds"] == b["start_seconds"]
     doc["_track"] = track
@@ -213,7 +214,7 @@ def _frame_colour(track: Path, rep: dict) -> str:
     from PIL import Image
 
     with Image.open(track / rep["path"]) as im:
-        r, g, b = np.asarray(im.convert("RGB")).reshape(-1, 3).mean(axis=0)
+        r, _g, b = np.asarray(im.convert("RGB")).reshape(-1, 3).mean(axis=0)
     return "red" if r > 150 and b < 100 else "blue" if b > 150 and r < 100 else "?"
 
 
