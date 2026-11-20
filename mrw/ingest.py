@@ -95,16 +95,38 @@ def _first_stream(streams: list[dict], codec_type: str) -> dict | None:
     return None
 
 
+def select_audio_stream(streams: list[dict]) -> tuple[dict | None, int]:
+    """(the audio stream ingest analyses, number of audio streams).
+
+    The rule is explicit and recorded (ORCH-13), never left to ffmpeg's
+    automatic selection (which ranks by default disposition, then channel
+    count): the first audio stream flagged disposition.default, else the
+    first audio stream. Both ffmpeg calls decode exactly this stream via
+    `-map 0:<index>`, so media.audio describes the stream that was decoded.
+    The video stage applies the same rule to find the audio clock origin.
+    """
+    audio = [s for s in streams if s.get("codec_type") == "audio"]
+    if not audio:
+        return None, 0
+    for s in audio:
+        if (s.get("disposition") or {}).get("default"):
+            return s, len(audio)
+    return audio[0], len(audio)
+
+
 def _decode_hash_and_duration(
-    path: Path, sample_rate: int, channels: int
+    path: Path, sample_rate: int, channels: int, stream_index: int
 ) -> tuple[str, float]:
-    """Hash the decoded PCM (s16le) and derive the exact decoded duration."""
+    """Hash the decoded PCM (s16le) of audio stream `stream_index` and
+    derive the exact decoded duration."""
     cmd = [
         "ffmpeg",
         "-v",
         "error",
         "-i",
         str(path),
+        "-map",
+        f"0:{stream_index}",
         "-vn",
         "-ac",
         str(channels),
@@ -135,7 +157,9 @@ def _decode_hash_and_duration(
     return h.hexdigest(), canonical.round_seconds(total / bytes_per_second)
 
 
-def _normalize_audio(src: Path, dest: Path, sample_rate: int, channels: int) -> None:
+def _normalize_audio(
+    src: Path, dest: Path, sample_rate: int, channels: int, stream_index: int
+) -> None:
     _run(
         [
             "ffmpeg",
@@ -144,6 +168,8 @@ def _normalize_audio(src: Path, dest: Path, sample_rate: int, channels: int) -> 
             "error",
             "-i",
             str(src),
+            "-map",
+            f"0:{stream_index}",
             "-vn",
             "-ac",
             str(channels),
@@ -200,7 +226,7 @@ def ingest(
     info = probe(media_path)
     fmt = info.get("format", {})
     streams = info.get("streams", [])
-    audio_stream = _first_stream(streams, "audio")
+    audio_stream, audio_stream_count = select_audio_stream(streams)
     if audio_stream is None:
         raise IngestError(f"no audio stream in {media_path.name}")
     video_stream = _first_stream(streams, "video")
@@ -211,8 +237,9 @@ def ingest(
 
     sr, ch = cfg.ingest.sample_rate, cfg.ingest.channels
     flac_path = track_dir / "source_audio.flac"
-    _normalize_audio(media_path, flac_path, sr, ch)
-    stream_sha, duration = _decode_hash_and_duration(media_path, sr, ch)
+    audio_index = int(audio_stream["index"])
+    _normalize_audio(media_path, flac_path, sr, ch, audio_index)
+    stream_sha, duration = _decode_hash_and_duration(media_path, sr, ch, audio_index)
 
     tags_raw = fmt.get("tags", {}) or {}
     tags = None
@@ -271,6 +298,8 @@ def ingest(
                 bit_rate=int(audio_stream["bit_rate"])
                 if audio_stream.get("bit_rate")
                 else None,
+                stream_index=audio_index,
+                stream_count=audio_stream_count,
             ),
             video=video,
         ),

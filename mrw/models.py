@@ -13,7 +13,9 @@ from pydantic import BaseModel
 
 # Per-document schema versions (PR #6 review, S2: never share a version
 # constant across documents — schemas evolve independently).
-SOURCE_SCHEMA_VERSION = "1.0.0"
+# source 1.1.0: additive — media.audio.stream_index / stream_count (which
+# audio stream was analysed, chosen explicitly — ORCH-13).
+SOURCE_SCHEMA_VERSION = "1.1.0"
 AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
@@ -63,6 +65,8 @@ class MediaAudio(BaseModel):
     sample_rate: int
     channels: int
     bit_rate: Optional[int] = None
+    stream_index: Optional[int] = None
+    stream_count: Optional[int] = None
 
 
 class MediaVideo(BaseModel):
