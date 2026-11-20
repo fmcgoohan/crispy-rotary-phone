@@ -38,7 +38,8 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     #    (portrait phone video decoded scrambled — VID-4).
     # 3: times on the audio timeline from a packet-pts frame table (stream
     #    start offsets, VFR — VID-2); last shot ends at the frames that
-    #    exist (VID-11); the motion pass shares the shots' origin.
+    #    exist (VID-11); the motion pass shares the shots' origin; motion
+    #    pairs straddling a cut belong to no shot (VID-3).
     "video": 3,
 }
 

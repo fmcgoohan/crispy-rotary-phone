@@ -240,8 +240,9 @@ def test_video_starting_after_audio_is_on_the_audio_clock(tmp_path: Path) -> Non
     from mrw.video import _motion_pass
 
     values, times = _motion_pass(media, 320, 240, 0, 0.5)
-    assert len(values) == 47  # 48 samples of 4.0 s at 12 fps, not 54
-    assert times[0] == pytest.approx(0.5 + 0.5 / 12)
+    assert len(times) == 48  # 4.0 s at 12 fps, not 54 (no padded head)
+    assert len(values) == 47
+    assert times[0] == pytest.approx(0.5) and times[24] == pytest.approx(2.5)
 
 
 @needs_ffmpeg
@@ -310,3 +311,71 @@ def test_audio_tail_never_extends_the_last_shot(tmp_path: Path) -> None:
     rep = shots[1]["representative_frames"][0]
     assert rep["time_seconds"] == pytest.approx(3.5, abs=0.001)
     assert _frame_colour(doc["_track"], rep) == "blue"
+
+
+# --- VID-3: motion pairs straddling a cut ----------------------------------------
+
+
+def test_cut_straddling_pair_belongs_to_no_shot() -> None:
+    from mrw.video import MOTION_FPS, shot_motion
+
+    # 25 samples (2 s at 12 fps), cut at 1.0 s = sample 12: pair 11 joins
+    # samples 11 (shot A) and 12 (shot B) and carries a big spike.
+    times = [k / MOTION_FPS for k in range(25)]
+    values = [0.0] * 24
+    values[11] = 0.05
+    a = shot_motion(values, times, 0.0, 1.0)
+    b = shot_motion(values, times, 1.0, 2.0)
+    assert (a.mean, a.p95) == (0.0, 0.0) and (b.mean, b.p95) == (0.0, 0.0)
+    # A pair fully inside a shot still counts.
+    values[5] = 0.05
+    assert shot_motion(values, times, 0.0, 1.0).p95 > 0.002
+    # Too short for two samples → the H2 0.0/0.0 convention.
+    assert shot_motion(values, times, 0.95, 1.05).p95 == 0.0
+
+
+def _texture(path: Path, seed: int, size: tuple[int, int], tint: tuple[int, int, int]) -> None:
+    from PIL import Image, ImageFilter
+
+    rng = np.random.default_rng(seed)
+    w, h = size
+    noise = rng.integers(0, 256, (h // 4, w // 4), dtype=np.uint8)
+    img = Image.fromarray(noise).resize((w, h), Image.BICUBIC).filter(
+        ImageFilter.GaussianBlur(1)
+    )
+    grey = np.asarray(img, dtype=np.float64) / 255.0
+    rgb = np.stack([grey * c for c in tint], axis=-1).clip(0, 255).astype(np.uint8)
+    Image.fromarray(rgb).save(path)
+
+
+@needs_ffmpeg
+@pytest.mark.slow
+def test_static_textured_shots_stay_static_across_a_hard_cut(tmp_path: Path) -> None:
+    # Two 1 s static textured scenes joined by a hard cut, then a 1.5 s
+    # scene scrolling 60 px/s. The cross-cut flow between the unrelated
+    # textures used to land in one of the 12-pair static shots and push
+    # its p95 into the "gentle movement" band.
+    _texture(tmp_path / "a.png", 1, (320, 240), (255, 120, 60))
+    _texture(tmp_path / "b.png", 2, (320, 240), (60, 120, 255))
+    _texture(tmp_path / "c.png", 3, (640, 240), (80, 255, 80))
+    media = tmp_path / "textures.mp4"
+    _ffmpeg(
+        "-loop", "1", "-framerate", "24", "-t", "1", "-i", str(tmp_path / "a.png"),
+        "-loop", "1", "-framerate", "24", "-t", "1", "-i", str(tmp_path / "b.png"),
+        "-loop", "1", "-framerate", "24", "-t", "1.5", "-i", str(tmp_path / "c.png"),
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=3.5:sample_rate=44100",
+        "-filter_complex",
+        "[0:v]setsar=1[a];[1:v]setsar=1[b];"
+        "[2:v]crop=320:240:x='t*60':y=0,setsar=1[c];"
+        "[a][b][c]concat=n=3:v=1:a=0,format=yuv420p[v]",
+        "-map", "[v]", "-map", "3:a",
+        "-c:v", "libx264", "-qp", "0", "-c:a", "aac", str(media),
+    )
+    doc = _run_video(media, tmp_path / "lib")
+    shots = doc["shots"]
+    assert [(s["start_frame"], s["end_frame"]) for s in shots] == [
+        (0, 24), (24, 48), (48, 84)
+    ]
+    assert shots[0]["motion"]["p95"] < 0.002
+    assert shots[1]["motion"]["p95"] < 0.002
+    assert shots[2]["motion"]["mean"] > 0.002  # real movement still measured

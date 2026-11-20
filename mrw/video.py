@@ -329,16 +329,30 @@ def motion_stats(gray_frames, width: int, height: int) -> list[float]:
     return mags
 
 
-def shot_motion(pair_values: list[float], pair_times: list[float],
+def shot_motion(pair_values: list[float], sample_times: list[float],
                 start: float, end: float) -> Motion:
+    """Motion of one shot from the 12 fps pass.
+
+    sample_times[k] is motion sample k's time on the unified timeline
+    (len = len(pair_values) + 1); pair k is the flow between samples k and
+    k+1. Each SAMPLE belongs to the shot whose [start, end) contains its
+    own time — the shots' partition — and a pair counts only when both of
+    its samples are in this shot (VID-3). The pair straddling a cut is
+    flow between two unrelated images and belongs to no shot; assigning
+    pairs by midpoint used to put one such spike into a neighbouring shot
+    per cut, dominating p95 of short static shots.
+    """
     import numpy as np
 
-    inside = [v for v, t in zip(pair_values, pair_times) if start <= t < end]
+    inside = [
+        v for k, v in enumerate(pair_values)
+        if start <= sample_times[k] < end and start <= sample_times[k + 1] < end
+    ]
     if not inside:
         # H2 degenerate convention (PR #12 review): a shot too short to
-        # contain any 12 fps motion-sample pair (< ~1/6 s) carries no
-        # motion evidence and reports 0.0/0.0 — deliberately identical to
-        # a static shot, and stated in the schema's motion description.
+        # contain two 12 fps motion samples (< ~1/6 s) carries no motion
+        # evidence and reports 0.0/0.0 — deliberately identical to a
+        # static shot, and stated in the schema's motion description.
         return Motion(mean=0.0, p95=0.0)
     arr = np.array(inside)
     return Motion(
@@ -535,7 +549,8 @@ def _extract_frames_rgb(path: Path, indices: list[int], width: int, height: int,
 def _motion_pass(path: Path, w0: int, h0: int, stream_index: int | None = None,
                  first_frame_seconds: float = 0.0) -> tuple[list[float], list[float]]:
     """12 fps / 320 px grayscale sequential decode → per-pair magnitudes
-    and the pairs' times on the unified timeline.
+    and every sample's time on the unified timeline (one more time than
+    magnitudes; pair k joins samples k and k+1 — see shot_motion).
 
     (w0, h0) are the display (post-rotation) dimensions from
     _video_stream_info, so the scale keeps the true aspect ratio.
@@ -568,10 +583,8 @@ def _motion_pass(path: Path, w0: int, h0: int, stream_index: int | None = None,
         for i in range(n)
     )
     values = motion_stats(frames, MOTION_WIDTH, height)
-    pair_times = [
-        first_frame_seconds + (i + 0.5) / MOTION_FPS for i in range(len(values))
-    ]
-    return values, pair_times
+    sample_times = [first_frame_seconds + k / MOTION_FPS for k in range(n)]
+    return values, sample_times
 
 
 def _detect_cuts(path: Path, vcfg: config.VideoConfig, stream: VideoStreamInfo,

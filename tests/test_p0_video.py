@@ -102,7 +102,7 @@ def test_rotated_video_frames_have_display_geometry(tmp_path):
     assert {tuple(top.mean(axis=(0, 1)) > 128), tuple(bottom.mean(axis=(0, 1)) > 128)} \
         == {(True, False, False), (False, False, True)}
     values, times = _motion_pass(clip, w, h)
-    assert len(values) == len(times) and max(values) < 0.002  # static scene
+    assert len(times) == len(values) + 1 and max(values) < 0.002  # static scene
 
 
 @needs_ffmpeg
