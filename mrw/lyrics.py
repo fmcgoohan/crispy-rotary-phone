@@ -309,14 +309,17 @@ def parse_supplied_lyrics(
         if _MARKUP.fullmatch(text):
             inner = text[1:-1].strip().lower()
             label = next((l for l in _LABELS if inner.startswith(l)), "other")
-            markup.append(
-                SuppliedMarkup(
-                    text=text,
-                    label=label,
-                    source_line_index=index,
-                    hint_seconds=hints[0],
+            # Same rule as sung lines: one entry per leading time tag, so a
+            # compressed "[00:45][01:30][Chorus]" marks every occurrence.
+            for hint in hints:
+                markup.append(
+                    SuppliedMarkup(
+                        text=text,
+                        label=label,
+                        source_line_index=index,
+                        hint_seconds=hint,
+                    )
                 )
-            )
             continue
         expanded = expanded or len(hints) > 1
         for hint in hints:
@@ -325,6 +328,10 @@ def parse_supplied_lyrics(
             )
     if expanded and all(l.hint_seconds is not None for l in lines):
         lines.sort(key=lambda l: l.hint_seconds)  # stable: file order on ties
+    if all(m.hint_seconds is not None for m in markup) and len(
+        {m.source_line_index for m in markup}
+    ) < len(markup):
+        markup.sort(key=lambda m: m.hint_seconds)
     return lines, markup
 
 

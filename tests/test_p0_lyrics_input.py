@@ -138,3 +138,11 @@ def test_unpinned_whisper_model_is_a_config_error(tmp_path):
     local.mkdir()
     cfg.write_text(f'[lyrics]\nmodel = "{local}"\n')
     assert config.load(cfg).lyrics.model == str(local)
+
+
+def test_compressed_markup_line_marks_every_occurrence():
+    raw = "[00:10.00][01:30.00][Chorus]\n[00:40.00][Verse 2]\n[00:11.00]la la\n"
+    _, markup = parse_supplied_lyrics(raw)
+    assert [(m.label, m.hint_seconds) for m in markup] == [
+        ("chorus", 10.0), ("verse", 40.0), ("chorus", 90.0)]
+    assert {m.source_line_index for m in markup if m.label == "chorus"} == {0}
