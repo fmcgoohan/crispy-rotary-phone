@@ -193,3 +193,92 @@ def test_unsupported_lyrics_extension_is_bad_invocation(tmp_path, name):
     assert result.exit_code == 2
     assert "must be a .lrc or .txt" in result.output
     assert not library.exists()  # refused before any work
+
+
+# --- crash safety of --update (review A-4) ---------------------------------------
+
+
+def test_failed_video_copy_leaves_registered_lyrics_untouched(tmp_path, monkeypatch):
+    import mrw.ingest
+    from mrw.ingest import IngestError
+
+    mp4 = tmp_path / "clip.mp4"
+    _tiny_video(mp4, "red")
+    library = tmp_path / "lib"
+    txt = tmp_path / "words.txt"
+    txt.write_text("hello there\n")
+    lib = ["--library", str(library)]
+    result = runner.invoke(app, ["ingest", str(mp4), *lib, "--lyrics", str(txt)])
+    assert result.exit_code == 0, result.output
+    track_id = next(p.name for p in library.iterdir() if p.is_dir())
+    track_dir = library / track_id
+    m = json.loads((track_dir / "manifest.json").read_text())
+    m["documents"]["lyrics"] = {"status": "ok", "path": "lyrics.json",
+                                "content_sha256": "1" * 64}
+    (track_dir / "manifest.json").write_text(json.dumps(m))
+    before = _snapshot(track_dir)
+
+    def enospc(media_path, track_dir, expected_sha):
+        raise IngestError("No space left on device")
+
+    monkeypatch.setattr(mrw.ingest, "copy_video_atomic", enospc)
+    lrc = tmp_path / "words.lrc"
+    lrc.write_text("[00:01.00]hello there\n")
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text("[ingest]\ncopy_video = true\n")
+    result = runner.invoke(app, ["ingest", str(mp4), *lib, "--config", str(cfg),
+                                 "--lyrics", str(lrc), "--update"])
+    assert result.exit_code == 1, result.output
+    # Nothing registered changed: the copy runs before any lyrics work.
+    assert _snapshot(track_dir) == before
+
+
+def test_interrupt_before_lyrics_move_is_detected_and_repaired(tmp_path, monkeypatch):
+    import mrw.ingest
+    from test_m3_smoke import _click_track, _fabricate_track
+
+    mix = _click_track(3.0)
+    library = tmp_path / "lib"
+    track_id = _fabricate_track(library, mix, {"vocals": mix}, tmp_path)
+    lib = ["--library", str(library)]
+    assert runner.invoke(app, ["features", track_id, *lib]).exit_code == 0
+    track_dir = library / track_id
+    media = Path(_source(library, track_id)["file"]["original_path"])
+    txt = tmp_path / "words.txt"
+    txt.write_text("hello there\n")
+    assert runner.invoke(
+        app, ["ingest", str(media), *lib, "--lyrics", str(txt), "--update"]).exit_code == 0
+
+    real_replace = mrw.ingest.os.replace
+
+    def interrupted(src, dst):  # source.json rewritten; lyrics not moved yet
+        if Path(src).name == ".lyrics_input.tmp":
+            raise KeyboardInterrupt
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(mrw.ingest.os, "replace", interrupted)
+    lrc = tmp_path / "words.lrc"
+    lrc.write_text("[00:01.00]hello there\n")
+    args = ["ingest", str(media), *lib, "--lyrics", str(lrc), "--update"]
+    assert runner.invoke(app, args).exit_code == 130
+    monkeypatch.undo()
+    assert not (track_dir / ".lyrics_input.tmp").exists()
+    assert _source(library, track_id)["lyrics_input"]["path"] == "lyrics_input.lrc"
+    assert not (track_dir / "lyrics_input.lrc").exists()
+    assert _manifest(library, track_id)["documents"]["lyrics"] == {"status": "pending"}
+
+    # The lyrics stage refuses the mismatch before any heavy work...
+    result = runner.invoke(app, ["lyrics", track_id, *lib])
+    assert result.exit_code == 2, result.output
+    assert "does not match the lyrics registered" in result.output
+    assert _manifest(library, track_id)["documents"]["lyrics"] == {"status": "pending"}
+
+    # ...and re-running the same --update repairs it.
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert "registered lyrics words.lrc (lrc)" in result.output
+    assert (track_dir / "lyrics_input.lrc").read_bytes() == lrc.read_bytes()
+    assert not (track_dir / "lyrics_input.txt").exists()
+    m = _manifest(library, track_id)
+    assert m["documents"]["source"]["content_sha256"] == hashlib.sha256(
+        (track_dir / "source.json").read_bytes()).hexdigest()

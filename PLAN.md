@@ -153,7 +153,10 @@ serialization, so there is exactly one code path that writes JSON.
   every option it ignored; `--update` registers new lyrics (resetting lyrics
   and structure to pending), applies `--title`, makes the video copy,
   records the given path as the original, and regenerates a missing
-  `source_audio.flac` — never touching other stages' documents.
+  `source_audio.flac` — never touching other stages' documents. Fallible
+  work runs before the registered state changes; the lyrics stage refuses
+  (exit 2) a lyrics_input file that does not hash to source.json, and
+  re-running the `--update` repairs it.
 - **Lyrics file** (optional, `.lrc` or `.txt` only — anything else is exit 2): copied verbatim into the track dir as
   `lyrics_input.lrc` / `lyrics_input.txt`, hashed, and registered in
   `source.json`. `.lrc` timestamps are treated as *hints*, not truth (they are

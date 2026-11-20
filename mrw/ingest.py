@@ -165,19 +165,36 @@ def _normalize_audio(src: Path, dest: Path, sample_rate: int, channels: int) -> 
     )
 
 
-def _lyrics_input(lyrics_path: Path, track_dir: Path) -> LyricsInput:
+def _lyrics_input(lyrics_path: Path, track_dir: Path, staged: Path | None = None) -> LyricsInput:
+    """Copy the lyrics into the track dir and describe them. With `staged`,
+    the bytes go there instead (the caller moves them to the returned
+    `path` later); the description is the same."""
     fmt = "lrc" if lyrics_path.suffix.lower() == ".lrc" else "txt"
     dest = track_dir / f"lyrics_input.{fmt}"
-    shutil.copyfile(lyrics_path, dest)
-    text = lrc.decode_text(dest.read_bytes())
+    target = staged or dest
+    shutil.copyfile(lyrics_path, target)
+    text = lrc.decode_text(target.read_bytes())
     lines = [ln for ln in text.splitlines() if ln.strip()]
     return LyricsInput(
         path=dest.name,
         format=fmt,
-        sha256=hashing.sha256_file(dest),
+        sha256=hashing.sha256_file(target),
         line_count=len(lines),
         has_timestamps=any(lrc.LEADING_TIME_TAGS.match(ln.strip()) for ln in lines),
     )
+
+
+LYRICS_STAGING = ".lyrics_input.tmp"
+
+
+def _registered_lyrics_intact(track_dir: Path, source_doc: dict) -> bool:
+    """The registered lyrics_input.* still hashes to source.json's sha256
+    (False after a crash mid-`--update`, so a re-run repairs it)."""
+    li = source_doc.get("lyrics_input")
+    if not li:
+        return True
+    path = track_dir / li["path"]
+    return path.is_file() and hashing.sha256_file(path) == li["sha256"]
 
 
 VIDEO_COPY_TMP = ".source_video.tmp"
@@ -261,6 +278,12 @@ def _ignored_options(
                else "no lyrics are registered")
             + ")"
         )
+    elif (
+        lyrics_path is not None
+        and source_doc is not None
+        and not _registered_lyrics_intact(track_dir, source_doc)
+    ):
+        ignored.append(f"--lyrics {lyrics_path} (the registered copy is damaged)")
     if title is not None and title != existing.title:
         ignored.append(f"--title {title!r} (current title {existing.title!r})")
     if existing.has_video and source_doc is not None:
@@ -324,19 +347,19 @@ def _update_existing(
         )
     updated: list[str] = []
 
+    # Order (review A-4): all fallible work that leaves the registered state
+    # alone comes first — flac regeneration, the video copy, staging the new
+    # lyrics under a temp name. Only then does the registered state change,
+    # in an order where every interruption point is either consistent or
+    # detected: lyrics/structure reset to pending, source.json rewritten,
+    # the staged lyrics moved into place, the old format removed, and the
+    # manifest's source entry updated last. A crash after source.json is
+    # rewritten but before the move is caught by the lyrics stage's own
+    # input check, and a re-run of --update repairs it
+    # (_registered_lyrics_intact).
     if not (track_dir / source_doc["normalized_audio"]["path"]).is_file():
         _regenerate_flac(media_path, track_dir, source_doc)
         updated.append("regenerated source_audio.flac")
-
-    lyrics_changed = _lyrics_changed(lyrics_path, source_doc)
-    if lyrics_changed:
-        assert lyrics_path is not None
-        old = source_doc.get("lyrics_input")
-        new = _lyrics_input(lyrics_path, track_dir)
-        if old and old["path"] != new.path:
-            (track_dir / old["path"]).unlink(missing_ok=True)
-        source_doc["lyrics_input"] = new.model_dump(mode="json")
-        updated.append(f"registered lyrics {lyrics_path.name} ({new.format})")
 
     copy_state = (
         _library_copy_state(track_dir, source_doc) if existing.has_video else "n/a"
@@ -354,13 +377,42 @@ def _update_existing(
             else "copied the video into the library"
         )
 
-    if source_doc["file"]["original_path"] != str(media_path):
-        source_doc["file"]["original_path"] = str(media_path)
-        source_doc["file"]["filename"] = media_path.name
-        updated.append(f"original_path -> {media_path}")
+    staged = track_dir / LYRICS_STAGING
+    try:
+        lyrics_changed = lyrics_path is not None and (
+            _lyrics_changed(lyrics_path, source_doc)
+            or not _registered_lyrics_intact(track_dir, source_doc)
+        )
+        new_lyrics: LyricsInput | None = None
+        if lyrics_changed:
+            assert lyrics_path is not None
+            new_lyrics = _lyrics_input(lyrics_path, track_dir, staged=staged)
+            source_doc["lyrics_input"] = new_lyrics.model_dump(mode="json")
+            updated.append(
+                f"registered lyrics {lyrics_path.name} ({new_lyrics.format})"
+            )
 
-    source = SourceDocument.model_validate(source_doc)
-    source_sha = library.write_document(track_id, "source.json", source)
+            def reset(m: Manifest) -> None:
+                m.documents.lyrics = DocumentEntry(status="pending")
+                m.documents.structure = DocumentEntry(status="pending")
+
+            library.update_manifest(track_id, reset)
+
+        if source_doc["file"]["original_path"] != str(media_path):
+            source_doc["file"]["original_path"] = str(media_path)
+            source_doc["file"]["filename"] = media_path.name
+            updated.append(f"original_path -> {media_path}")
+
+        source = SourceDocument.model_validate(source_doc)
+        source_sha = library.write_document(track_id, "source.json", source)
+        if new_lyrics is not None:
+            os.replace(staged, track_dir / new_lyrics.path)
+            for fmt in ("lrc", "txt"):
+                if f"lyrics_input.{fmt}" != new_lyrics.path:
+                    (track_dir / f"lyrics_input.{fmt}").unlink(missing_ok=True)
+    finally:
+        staged.unlink(missing_ok=True)
+
     ingest_hash = config.stage_hash(cfg.ingest)
     new_title = title if title is not None and title != existing.title else None
     if new_title is not None:
@@ -374,9 +426,6 @@ def _update_existing(
         m.documents.source = m.documents.source.model_copy(
             update={"content_sha256": source_sha, "config_hash": ingest_hash}
         )
-        if lyrics_changed:
-            m.documents.lyrics = DocumentEntry(status="pending")
-            m.documents.structure = DocumentEntry(status="pending")
 
     manifest = library.update_manifest(track_id, apply)
     return IngestResult(

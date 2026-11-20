@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, inputs, lrc, versions
+from . import TOOL_VERSION, canonical, config, hashing, inputs, lrc, versions
 from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
 from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import (
@@ -550,6 +550,21 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
     )
     lyrics_input = source_doc.get("lyrics_input")
     mode = "aligned" if lyrics_input else "transcribed"
+    if lyrics_input:
+        # The registered text must be the one on disk (review A-4): an
+        # interrupted `mrw ingest --update` can leave source.json naming
+        # lyrics that were never moved into place. Checked before any heavy
+        # work; nothing is recorded.
+        lyrics_file = track_dir / lyrics_input["path"]
+        if not lyrics_file.is_file() or (
+            hashing.sha256_file(lyrics_file) != lyrics_input["sha256"]
+        ):
+            raise PrerequisiteError(
+                f"track {track_id}: {lyrics_input['path']} is missing or does "
+                "not match the lyrics registered in source.json — re-register "
+                "them with `mrw ingest <the media file> --lyrics <lyrics file> "
+                "--update`"
+            )
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
