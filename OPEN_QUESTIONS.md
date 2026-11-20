@@ -52,9 +52,13 @@ indices are approximate.
 grid around the phase fit changed. beat_track now runs with trim=True, so
 beatless intros/outros carry no beats (interior breakdowns are still
 filled). tempo.confidence no longer scores inter-beat regularity (regular by
-construction); it is the beats' onset support against 1/3- and 2/3-beat
-probes, normalised by the p90 on-beat strength (formula in the schema). It
-cannot detect half/double-tempo errors. A mix with no beat evidence fails
+construction); it is the beats' onset support against off-beat probes at
+k/7 of a beat (the minimum over the six), normalised by the p90 on-beat
+strength (formula in the schema). A first draft probed only 1/3 and 2/3 of
+a beat, which sit exactly on triplet hats and scored correctly-tracked
+shuffles and 12/8 as beatless (review D-1); the 1/7 points miss every
+common subdivision, leaving septuplets as the blind spot. It cannot detect
+half/double-tempo errors. A mix with no beat evidence fails
 the features stage (exit 1, manifest failed) so bpm_global keeps its
 exclusiveMinimum 0 promise; the alternative of relaxing it to 0.0 was
 rejected as a consumer-breaking change. Onsets are level-gated relative to

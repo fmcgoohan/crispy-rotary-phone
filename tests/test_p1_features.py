@@ -195,11 +195,42 @@ def test_click_track_confidence_high_and_bpm_unchanged() -> None:
 
 
 def test_straight_eighths_are_not_read_as_beatless() -> None:
-    # The reason the probes sit at 1/3 and 2/3 of a beat, not the half beat.
+    # The half beat is not an off-beat probe point (BEAT_OFF_PROBES).
     y = _clicks(20.0, 0.5, 0.6) + _clicks(20.0, 0.25, 0.3)
     tempo, _ = features._beats_and_tempo(_q16(y), WINDOW)
     assert tempo.bpm_global == 120.0
     assert tempo.confidence >= 0.8
+
+
+def _subdivided(bpm: float, per_beat: int, seconds: float = 20.0) -> np.ndarray:
+    """Beat clicks (0.6) plus hats (0.3) dividing each beat into per_beat."""
+    period = 60.0 / bpm
+    return _clicks(seconds, period, 0.6) + _clicks(seconds, period / per_beat, 0.3)
+
+
+@pytest.mark.parametrize(
+    ("bpm", "per_beat"),
+    [(100, 3), (120, 3), (150, 3), (120, 4), (140, 4), (120, 5), (120, 6)],
+    ids=["trip100", "trip120", "trip150", "16th120", "16th140", "quint120", "sext120"],
+)
+def test_subdivided_rhythms_are_not_read_as_beatless(bpm: float, per_beat: int) -> None:
+    # Review D-1: the first draft probed 1/3 and 2/3 of a beat, exactly where
+    # triplet hats sit, and scored correctly-tracked shuffles ~0.07. The
+    # k/7 probes miss every common subdivision.
+    tempo, _ = features._beats_and_tempo(_q16(_subdivided(bpm, per_beat)), WINDOW)
+    assert abs(tempo.bpm_global - bpm) <= 1.0  # tracked at the true tempo
+    assert tempo.confidence >= 0.5
+
+
+def test_off_beat_probes_avoid_common_subdivisions() -> None:
+    w = features.BEAT_SALIENCE_WINDOW_SECONDS
+    for per_beat in (2, 3, 4, 5, 6):
+        grid = [k / per_beat for k in range(per_beat + 1)]
+        # At 120 BPM (0.5 s beat) some probe clears every subdivision hit by
+        # more than the ±30 ms window.
+        assert any(
+            min(abs(x - g) for g in grid) * 0.5 > w for x in features.BEAT_OFF_PROBES
+        ), per_beat
 
 
 @pytest.mark.parametrize("make", [_drone, _pink], ids=["drone", "pink_noise"])

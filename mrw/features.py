@@ -5,7 +5,8 @@ Reviewed conventions implemented here:
 - 10 ms hop (100 Hz grid), analysis window 2048 (PLAN §4.3).
 - Tempo/beat grid computed once on the mix (librosa beat_track, trim=True:
   no beats through beatless intros/outros); tempo.confidence is the beats'
-  onset support against 1/3- and 2/3-beat probes (FEAT-3, _beat_confidence).
+  onset support against off-beat probes at k/7 of a beat (FEAT-3,
+  _beat_confidence).
   A mix with no beat evidence (digital silence, no beats tracked) fails the
   stage rather than writing bpm_global 0.0 (DET-11/SCH-9, H3).
 - Downbeats via
@@ -222,20 +223,33 @@ def _pool(env, frame: int, w: int) -> float:
     return float(env[max(0, frame - w) : frame + w + 1].max())
 
 
+# Off-beat probe positions, as fractions of the local beat period (FEAT-3,
+# review D-1): the six 1/7-beat points. None of them coincides with a
+# common subdivision — 8ths (1/2), triplets (1/3, 2/3), 16ths (1/4, 3/4),
+# quintuplets (k/5), sextuplets (k/6) — so at least one probe falls between
+# subdivision hits and off_i reads the gap, not the hat. Septuplet
+# subdivisions are the (rare) blind spot. Structural, like the window.
+BEAT_OFF_PROBES = tuple(k / 7 for k in range(1, 7))
+
+
 def _beat_confidence(env, beat_frames) -> float:
     """Onset support for the beat grid (FEAT-3) — see the schema description.
 
     For beat i at frame b_i with local period p_i (the following inter-beat
     interval; the last beat reuses the previous one): on_i is the envelope
-    max within ±BEAT_SALIENCE_WINDOW of b_i, off_i is the SMALLER of the
-    same pooled value at b_i + p_i/3 and b_i + 2p_i/3. The 1/3 and 2/3 probes
-    avoid the half-beat (straight 8ths would read as beatless) and taking the
-    smaller one tolerates a swung 8th on the 2/3 probe. confidence =
-    mean_i clip((on_i - off_i) / ref, 0, 1) with ref = p90 of on_i, so beats
-    placed over nothing count 0 and beats stronger than their off-beat probes
-    count up to 1. Beatless audio (drone, noise) has on ≈ off → ~0.1; a
-    click track → ~0.9. Half/double-tempo errors are not detected: a grid at
-    half the true tempo still sits on onsets.
+    max within ±BEAT_SALIENCE_WINDOW of b_i; off_i is the SMALLEST of the
+    same pooled value at the BEAT_OFF_PROBES points b_i + k·p_i/7 (k = 1..6),
+    skipping a probe whose window would contain either beat frame (it would
+    read the beat itself; only possible above ~350 BPM). Taking the
+    minimum over probes that avoid every common subdivision means 8ths,
+    swung 8ths, triplets, 16ths, quintuplets and sextuplets under a correct
+    grid all keep off_i at the gap level (review D-1: the earlier 1/3 + 2/3
+    probes sat exactly on triplets). confidence = mean_i clip((on_i - off_i)
+    / ref, 0, 1) with ref = p90 of on_i, so beats placed over nothing count
+    0 and beats stronger than their off-beat gaps count up to 1. Beatless
+    audio (drone, noise) has on ≈ off → ~0.1-0.2; a click track → ~0.9.
+    Half/double-tempo errors are not detected: a grid at half the true tempo
+    still sits on onsets.
     """
     import numpy as np
 
@@ -246,12 +260,14 @@ def _beat_confidence(env, beat_frames) -> float:
     periods = np.diff(frames)
     periods = np.append(periods, periods[-1])
     on = np.array([_pool(env, f, w) for f in frames])
-    off = np.array(
-        [
-            min(_pool(env, f + round(p / 3), w), _pool(env, f + round(2 * p / 3), w))
-            for f, p in zip(frames, periods)
-        ]
-    )
+    off = []
+    for f, p in zip(frames, periods):
+        offsets = [round(x * p) for x in BEAT_OFF_PROBES]
+        clear = [d for d in offsets if w < d < p - w]
+        # Beat periods under 2w+2 frames (>~750 BPM) leave no clear probe;
+        # librosa's tempo range never gets there, but stay total: midpoint.
+        off.append(min(_pool(env, f + d, w) for d in (clear or [p // 2])))
+    off = np.array(off)
     ref = float(np.percentile(on, 90))
     if ref <= 0.0:
         return 0.0
