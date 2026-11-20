@@ -116,3 +116,33 @@ def test_whisper_model_resolves_from_cache_only(tmp_path, monkeypatch):
     model_dir = tmp_path / "local-model"
     model_dir.mkdir()
     assert resolve_whisper_model(str(model_dir)) == str(model_dir)
+
+
+def test_whisper_models_are_pinned_to_commits():
+    from mrw.config import LyricsConfig
+    from mrw.whisper_models import WHISPER_MODELS
+
+    assert LyricsConfig().model in WHISPER_MODELS
+    for name, (repo, sha) in WHISPER_MODELS.items():
+        assert "/" in repo and len(sha) == 40 and int(sha, 16) >= 0, name
+
+
+def test_unpinned_whisper_model_is_a_config_error(tmp_path):
+    from mrw import config
+
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text('[lyrics]\nmodel = "Someone/some-model"\n')
+    with pytest.raises(config.ConfigError, match="lyrics.model"):
+        config.load(cfg)
+    local = tmp_path / "my-model"
+    local.mkdir()
+    cfg.write_text(f'[lyrics]\nmodel = "{local}"\n')
+    assert config.load(cfg).lyrics.model == str(local)
+
+
+def test_compressed_markup_line_marks_every_occurrence():
+    raw = "[00:10.00][01:30.00][Chorus]\n[00:40.00][Verse 2]\n[00:11.00]la la\n"
+    _, markup = parse_supplied_lyrics(raw)
+    assert [(m.label, m.hint_seconds) for m in markup] == [
+        ("chorus", 10.0), ("verse", 40.0), ("chorus", 90.0)]
+    assert {m.source_line_index for m in markup if m.label == "chorus"} == {0}

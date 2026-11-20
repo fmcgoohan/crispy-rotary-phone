@@ -12,7 +12,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from . import canonical
 
@@ -62,7 +62,21 @@ class FeaturesConfig(_Section):
 
 class LyricsConfig(_Section):
     # OQ-7: faster-whisper on the isolated vocal stem; `small` default.
+    # A pinned size name (mrw/whisper_models.py) or a local model directory;
+    # checked at load so a typo exits 2 before any work.
     model: str = "small"
+
+    @field_validator("model")
+    @classmethod
+    def _model_is_pinned_or_local(cls, value: str) -> str:
+        from .whisper_models import WHISPER_MODELS
+
+        if value in WHISPER_MODELS or Path(value).is_dir():
+            return value
+        raise ValueError(
+            f"'{value}' is not a pinned whisper model ({', '.join(sorted(WHISPER_MODELS))}) "
+            "or an existing local model directory"
+        )
     # Optional language pin; None = detect once and record (schema).
     language: str | None = None
     # Flag thresholds (schema-documented vocabulary; review 006 F-1 policy:
