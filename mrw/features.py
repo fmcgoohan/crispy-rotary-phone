@@ -276,6 +276,12 @@ def _vocal_activity(vocal_rms_db, fcfg: config.FeaturesConfig) -> VocalActivity:
 
 def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesResult:
     track_id = library.resolve_track_id(track)
+    with library.stage_lock(track_id, "features"):
+        return _run_features(track_id, library, cfg)
+
+
+def _run_features(track: str, library: Library, cfg: config.Config) -> FeaturesResult:
+    track_id = library.resolve_track_id(track)
     manifest = library.read_manifest(track_id)
     if manifest is None or manifest.documents.source.status != "ok":
         raise PrerequisiteError(f"track {track_id} has no successful ingest")

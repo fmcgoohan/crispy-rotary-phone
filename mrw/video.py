@@ -385,6 +385,17 @@ def run_video(
     track: str, library: Library, cfg: config.Config, estimate_only: bool = False
 ) -> VideoResult:
     track_id = library.resolve_track_id(track)
+    if estimate_only:
+        # Read-only (records nothing, spends nothing): no run lock needed.
+        return _run_video(track_id, library, cfg, estimate_only)
+    with library.stage_lock(track_id, "video"):
+        return _run_video(track_id, library, cfg, estimate_only)
+
+
+def _run_video(
+    track: str, library: Library, cfg: config.Config, estimate_only: bool = False
+) -> VideoResult:
+    track_id = library.resolve_track_id(track)
     manifest = library.read_manifest(track_id)
     if manifest is None or manifest.documents.source.status != "ok":
         raise PrerequisiteError(f"track {track_id} has no successful ingest")

@@ -92,6 +92,30 @@ class Library:
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
 
+    @contextlib.contextmanager
+    def stage_lock(self, track_id: str, stage: str) -> Iterator[None]:
+        """Refuse a second concurrent run of one stage on one track.
+
+        Two `mrw stems T` runs shared the fixed .stems.tmp dir: the second
+        deleted the first's output mid-write and then recorded failed over
+        a good result (ORCH-4). A non-blocking exclusive flock on
+        `<track>/.<stage>.lock` makes the second run exit 2 instead. The
+        lock dies with the process (crash, SIGKILL), so no stale-lock
+        cleanup is ever needed; the empty file stays, like .manifest.lock.
+        """
+        lock_path = self.track_dir(track_id) / f".{stage}.lock"
+        with open(lock_path, "a") as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise PrerequisiteError(
+                    f"stage {stage} already running for {track_id}"
+                ) from None
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def update_manifest(
         self, track_id: str, mutate: Callable[[Manifest], None]
     ) -> Manifest:

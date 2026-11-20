@@ -139,6 +139,12 @@ def _separate(
 
 def run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
     track_id = library.resolve_track_id(track)
+    with library.stage_lock(track_id, "stems"):
+        return _run_stems(track_id, library, cfg)
+
+
+def _run_stems(track: str, library: Library, cfg: config.Config) -> StemsResult:
+    track_id = library.resolve_track_id(track)
     manifest = library.read_manifest(track_id)
     if manifest is None or manifest.documents.source.status != "ok":
         raise PrerequisiteError(f"track {track_id} has no successful ingest")
