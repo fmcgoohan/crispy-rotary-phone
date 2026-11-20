@@ -52,7 +52,9 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     #    start offsets, VFR — VID-2); last shot ends at the frames that
     #    exist (VID-11); the motion pass shares the shots' origin; motion
     #    pairs straddling a cut belong to no shot (VID-3).
-    "video": 3,
+    # 4: the shot detector reads exactly the analysed video stream (it took
+    #    the file's first video stream, attached pictures included).
+    "video": 4,
 }
 
 

@@ -34,10 +34,13 @@ Determinism (D5 extension — JPEG byte stability is load-bearing):
 from __future__ import annotations
 
 import bisect
+import contextlib
 import itertools
 import json
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
@@ -463,6 +466,10 @@ class VideoStreamInfo:
     height: int
     fps: float  # average frame rate — sizing hints only, never timing
     start_time: float  # stream start_time (container clock)
+    # Video streams in the file, attached pictures included. Above 1, a
+    # reader that picks its own stream (OpenCV, under scenedetect) may not
+    # pick this one — see _detector_input.
+    n_video_streams: int = 1
 
 
 def _ffprobe_json(args: list[str], what: str) -> dict:
@@ -492,6 +499,7 @@ def _video_stream_info(path: Path) -> VideoStreamInfo:
     )
     if stream is None:
         raise VideoError("no video stream (cover art is not video)")
+    n_video = sum(1 for s in info["streams"] if s.get("codec_type") == "video")
     try:
         fps = float(Fraction(stream.get("avg_frame_rate", "0/1")))
     except (ValueError, ZeroDivisionError):
@@ -504,6 +512,7 @@ def _video_stream_info(path: Path) -> VideoStreamInfo:
         height=height,
         fps=fps,
         start_time=float(start) if start not in (None, "N/A") else 0.0,
+        n_video_streams=n_video,
     )
 
 
@@ -707,25 +716,63 @@ def _motion_pass(path: Path, w0: int, h0: int, stream_index: int | None = None,
     return values, sample_times
 
 
+@contextlib.contextmanager
+def _detector_input(path: Path, stream: VideoStreamInfo) -> Iterator[Path]:
+    """A file whose only video stream is the analysed one, for scenedetect.
+
+    OpenCV (scenedetect's backend) takes the file's first video stream,
+    attached pictures included, and has no stream selector; frame table,
+    extraction and motion use `stream.index` (-map 0:<index>). When the
+    file holds any other video stream, the analysed one is stream-copied
+    (no re-encode: packets and their relative timing are unchanged) into a
+    temporary Matroska file that is removed afterwards. A file with a
+    single video stream is passed through untouched, with no extra work."""
+    if stream.n_video_streams <= 1:
+        yield path
+        return
+    with tempfile.TemporaryDirectory(prefix="mrw-detect-") as tmp:
+        out = Path(tmp) / "stream.mkv"
+        try:
+            proc = subprocess.run(
+                ["ffmpeg", "-v", "error", "-nostdin", "-i", str(path),
+                 "-map", f"0:{stream.index}", "-c", "copy",
+                 "-fflags", "+bitexact", "-f", "matroska", str(out)],
+                capture_output=True,
+                check=False,
+                timeout=600,  # stream copy only — no decode
+            )
+        except subprocess.TimeoutExpired as e:
+            raise VideoError("isolating the video stream timed out after 600 s") from e
+        if proc.returncode != 0:
+            raise VideoError(
+                f"isolating video stream {stream.index} for shot detection "
+                f"failed: {proc.stderr.decode()[:300]}"
+            )
+        yield out
+
+
 def _detect_cuts(path: Path, vcfg: config.VideoConfig, stream: VideoStreamInfo,
                  timeline: Timeline) -> list[int]:
     """Frame indices where ContentDetector starts a new shot.
 
+    The detector reads exactly the analysed stream (_detector_input).
     Scenedetect 0.7 positions are PTS-derived (OpenCV CAP_PROP_POS_MSEC,
-    relative to the stream's start_time); their frame_num is only an
+    relative to the stream's start_time — unchanged by a stream copy, which
+    shifts every timestamp of the stream alike); their frame_num is only an
     average-rate approximation on VFR input, so it is never used. Each cut
     time is mapped back to the container clock and to the nearest frame of
-    the packet table."""
+    the frame table."""
     from scenedetect import ContentDetector, detect
 
     fps = stream.fps if stream.fps > 0 else 24.0
     min_len_frames = max(1, round(vcfg.min_shot_seconds * fps))
-    scenes = detect(
-        str(path),
-        ContentDetector(threshold=vcfg.detector_threshold,
-                        min_scene_len=min_len_frames),
-        start_in_scene=True,
-    )
+    with _detector_input(path, stream) as detector_path:
+        scenes = detect(
+            str(detector_path),
+            ContentDetector(threshold=vcfg.detector_threshold,
+                            min_scene_len=min_len_frames),
+            start_in_scene=True,
+        )
     return [
         timeline.index_near(stream.start_time + start.seconds)
         for start, _ in scenes[1:]
