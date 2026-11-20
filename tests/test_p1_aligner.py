@@ -78,10 +78,13 @@ def test_transcript_word_never_used_by_two_lines() -> None:
 def test_long_internal_gap_rejects_window() -> None:
     # "first half" ... 20 s break ... "second half": no window may span it.
     words = _say("first half of", 10.0) + _say("the line", 30.0)
-    out = align_lines([SuppliedLine("first half of the line", 0)], words)
-    a = out[0]
-    if a.anchored:
-        assert a.end - a.start < 8.0
+    result = align([SuppliedLine("first half of the line", 0)], words)
+    a = result.lines[0]
+    # It anchors on the first phrase alone; the words after the break are
+    # never part of its window, so they stay unmatched.
+    assert a.anchored
+    assert 10.0 <= a.start and a.end < 12.0
+    assert [w.text for w in result.unmatched] == ["the", "line"]
 
 
 # --- LYR-2: hints as a cost term ---------------------------------------------------
@@ -318,3 +321,63 @@ def test_alignment_is_deterministic() -> None:
     a = align(lines, _hook_stream(), duration=100.0)
     b = align(lines, _hook_stream(), duration=100.0)
     assert a == b
+
+
+# --- review B: hints never reorder; spans never invert; long-gap spread ---------
+
+
+def test_single_wrong_hint_does_not_move_line() -> None:
+    # Five lines sung cleanly at 10/20/30/40/50 s; line 2's .lrc timestamp is
+    # a typo (300 s). The hint is only a capped cost: the line still anchors
+    # at 30 s, and the offset estimate ignores the outlier.
+    texts = [
+        "city lights are bleeding through",
+        "neon reverie dont wake me",
+        "hold the static in your hands",
+        "every signal fading into grey",
+        "burning skyline over water",
+    ]
+    words = [w for k, t in enumerate(texts) for w in _say(t, 10.0 + 10.0 * k)]
+    hints = [10.0, 20.0, 300.0, 40.0, 50.0]
+    result = align(
+        [SuppliedLine(t, i, h) for i, (t, h) in enumerate(zip(texts, hints))],
+        words,
+        duration=120.0,
+    )
+    out = _by_index(result.lines)
+    assert all(out[i].anchored for i in range(5))
+    assert out[2].start == 30.0
+    assert result.hint_offset == 0.0
+    assert [a.source_line_index for a in result.lines] == [0, 1, 2, 3, 4]
+
+
+def test_overlapping_heard_words_never_invert_interpolated_span() -> None:
+    # Whisper word spans may overlap: a(1.0-1.6) c(1.5-2.0). The unheard
+    # supplied word between them must not end before it starts.
+    words = _stream(("a", 1.0, 1.6), ("c", 1.5, 2.0), ("d", 2.0, 2.4))
+    a = align_lines([SuppliedLine("a bb c d", 0)], words)[0]
+    assert a.anchored and "timing_interpolated" in a.flags
+    for _text, start, end, _conf in a.words:
+        assert start <= end
+    assert [w[0] for w in a.words] == ["a", "bb", "c", "d"]
+
+
+def test_unanchored_run_spread_over_long_gap() -> None:
+    # Anchors end ~12 s and start at 70 s; two unanchored lines between get
+    # starts spread over the whole gap (not bunched at its left edge), each
+    # capped at 10 s.
+    words = _say("first line here", 10.0) + _say("last line here", 70.0)
+    lines = [
+        SuppliedLine("first line here", 0),
+        SuppliedLine("zzz qqq", 1),
+        SuppliedLine("xxx vvv", 2),
+        SuppliedLine("last line here", 3),
+    ]
+    out = _by_index(align_lines(lines, words))
+    left, right = out[0].end, out[3].start
+    slot = (right - left) / 2
+    assert out[1].start == left
+    assert abs(out[2].start - (left + slot)) < 1e-9
+    for i in (1, 2):
+        assert abs((out[i].end - out[i].start) - 10.0) < 1e-9
+    assert out[2].end <= right

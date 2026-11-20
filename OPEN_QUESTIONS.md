@@ -79,8 +79,11 @@ style PLAN §4 describes): a cleaner later chorus could capture an earlier
 chorus's lines. `.lrc` timestamps are no longer a −5/+20 s search window
 but a capped cost term, applied after a global hint offset is estimated
 from unambiguous anchors — so files synced to a different version of the
-song still help. Word timings inside an anchored line come from content
-pairing, never position; inferred word times carry `timing_interpolated`.
+song still help. Lines keep file order unless hint order aligns strictly
+better against the transcript: a single mistyped timestamp only costs its
+line ≤ 0.3, so the line still anchors where it is sung (review B-1), while
+a genuinely out-of-order `.lrc` still aligns. Word timings inside an
+anchored line come from content pairing, never position; inferred word times carry `timing_interpolated`.
 
 **OQ-7 — Whisper engine: faster-whisper (CPU) vs mlx-whisper (Apple GPU/ANE)?**
 **Recommendation: faster-whisper, model `small`, int8.** Mature word

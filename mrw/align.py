@@ -7,10 +7,15 @@ synthetic transcripts (OQ-6). The word stream is whatever observed
 
 Algorithm (lyrics algorithm version 4; LYR-1, LYR-2, LYR-8, LYR-11):
 
-1. Line order. Lines are aligned in file order, except that lines carrying
-   an `.lrc` hint are permuted among their own slots into hint order (a
-   malformed, out-of-order `.lrc` — the timeline wins); unhinted lines
-   keep their file positions.
+1. Line order. Lines are aligned in the order the caller supplies them —
+   file order (parse_supplied_lyrics orders an expanded multi-tag `.lrc` by
+   hint). When hinted lines are out of hint order, the hint-ordered sequence
+   (hinted lines permuted among their own slots; unhinted lines keep their
+   positions) is solved too, and taken only when its alignment total is
+   strictly higher — i.e. the transcript corroborates the hint order. So a
+   malformed, out-of-order `.lrc` still aligns, while one mistyped
+   timestamp (whose permutation anchors fewer lines) never moves its line
+   away from where it is sung.
 2. Global monotone alignment at line granularity — dynamic programming
    over (line i, transcript word j), the Needleman-Wunsch-style alignment
    PLAN §4 describes. Each line either anchors a contiguous word window
@@ -47,8 +52,9 @@ Algorithm (lyrics algorithm version 4; LYR-1, LYR-2, LYR-8, LYR-11):
 6. Unanchored lines get `unaligned` + `timing_interpolated` and line
    timing only (empty `words` — never fake word-level precision): a hinted
    line starts at its offset-corrected hint; a run of k consecutive
-   unhinted lines is spread evenly over the gap between its neighbours
-   (≤ UNANCHORED_LINE_CAP_SECONDS each), or laid out OPEN_ENDED_LINE_SECONDS
+   unhinted lines gets starts evenly spaced over the gap between its
+   neighbours, each lasting gap/k capped at UNANCHORED_LINE_CAP_SECONDS
+   (the rest of a slot stays unclaimed), or laid out OPEN_ENDED_LINE_SECONDS
    each when nothing follows (less, evenly, when the track ends sooner).
    Zero-anchor convention (H2): with no anchors and no hints, lines are laid
    out in order from 0 s, OPEN_ENDED_LINE_SECONDS each (squeezed evenly
@@ -142,7 +148,7 @@ def _ratio(a: str, b: str) -> float:
 # --- line order ----------------------------------------------------------------
 
 
-def _sequence(lines: list[SuppliedLine]) -> list[SuppliedLine]:
+def _hint_sorted(lines: list[SuppliedLine]) -> list[SuppliedLine]:
     """File order, with hinted lines permuted into hint order among the
     slots hinted lines occupy (stable: file order on equal hints)."""
     slots = [i for i, line in enumerate(lines) if line.hint_seconds is not None]
@@ -222,10 +228,10 @@ def _monotone_dp(
     cands: list[list[list[tuple[int, float]]]],
     use_hints: bool,
     offset: float,
-) -> list[tuple[int, int, float] | None]:
+) -> tuple[list[tuple[int, int, float] | None], float]:
     """Choose ≤ 1 window per line, windows in line order and disjoint,
-    maximising Σ (SKIP_PENALTY + score − hint cost). Returns, per line,
-    (start, length, score) or None (skipped)."""
+    maximising Σ (SKIP_PENALTY + score − hint cost). Returns (per line
+    (start, length, score) or None when skipped, the maximised total)."""
     n, m = len(seq), len(words)
     # g[i][j]: best total for lines i.. using words j.. (backward DP, so
     # the forward reconstruction can prefer the earliest window).
@@ -262,7 +268,7 @@ def _monotone_dp(
             j += 1  # line i anchors later (or is skipped later)
         else:
             i += 1  # line i is skipped
-    return chosen
+    return chosen, g[0][0]
 
 
 def _strong_occurrences(per_start: list[list[tuple[int, float]]]) -> int:
@@ -420,6 +426,10 @@ def _pair_words(
         if run_end < n:
             right = assigned[run_end][0]
             left = words[-1][2] if words else min(edge_start, right)
+            # Observed neighbours may overlap (Whisper word spans can, and
+            # so can clamping): never emit end < start — the run collapses
+            # to a zero-length span at the left neighbour's end.
+            right = max(right, left)
         else:
             left = words[-1][2] if words else edge_start
             right = max(edge_end, left)
@@ -527,14 +537,19 @@ def _place_unanchored(
         left = results[i - 1].end if i > 0 else 0.0
         right = fixed_start(run_end) if run_end < n else None
         if right is not None and right > left:
-            width = min((right - left) / k, UNANCHORED_LINE_CAP_SECONDS)
+            # Starts evenly spaced over the whole gap; each line lasts its
+            # slot, capped, so a long instrumental gap is not claimed as
+            # sung and the run is not bunched at the left edge.
+            slot = (right - left) / k
+            width = min(slot, UNANCHORED_LINE_CAP_SECONDS)
         else:
             width = OPEN_ENDED_LINE_SECONDS
             if duration is not None:
                 width = min(width, max(0.0, duration - left) / k)
+            slot = width
         for m in range(k):
-            results[i + m].start = clamp(left + m * width)
-            results[i + m].end = clamp(left + (m + 1) * width)
+            results[i + m].start = clamp(left + m * slot)
+            results[i + m].end = clamp(left + m * slot + width)
         i = run_end
 
 
@@ -556,16 +571,26 @@ def align(
         t = max(t, 0.0)
         return min(t, duration) if duration is not None else t
 
-    seq = _sequence(lines)
     norm_words = [normalize(w.text) for w in words]
-    cands = _candidates(seq, words, norm_words, min_anchor_score)
 
-    has_hints = any(l.hint_seconds is not None for l in seq)
-    offset = 0.0
-    chosen = _monotone_dp(seq, words, cands, use_hints=False, offset=0.0)
-    if has_hints:
-        offset = _estimate_offset(seq, words, cands, chosen)
-        chosen = _monotone_dp(seq, words, cands, use_hints=True, offset=offset)
+    def solve(seq: list[SuppliedLine]):
+        cands = _candidates(seq, words, norm_words, min_anchor_score)
+        offset = 0.0
+        chosen, total = _monotone_dp(seq, words, cands, use_hints=False, offset=0.0)
+        if any(l.hint_seconds is not None for l in seq):
+            offset = _estimate_offset(seq, words, cands, chosen)
+            chosen, total = _monotone_dp(
+                seq, words, cands, use_hints=True, offset=offset
+            )
+        return seq, chosen, offset, total
+
+    best = solve(list(lines))
+    reordered = _hint_sorted(lines)
+    if any(a is not b for a, b in zip(reordered, lines)):
+        alt = solve(reordered)
+        if alt[3] > best[3] + _EPS:  # ties keep file order
+            best = alt
+    seq, chosen, offset, _ = best
 
     results: list[AnchoredLine] = []
     used_words: set[int] = set()
