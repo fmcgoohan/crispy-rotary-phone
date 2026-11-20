@@ -10,7 +10,22 @@
     "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
     "video_span": {
       "$ref": "common.schema.json#/$defs/interval",
-      "description": "Extent of the video stream on the unified timeline (normally 0 .. duration)."
+      "description": "Extent of the analysed video on the unified timeline: from the first frame presented at or after t = 0 to the end of the last frame that exists in the stream (packet table, never a container-duration estimate). Starts at timing.offset_seconds when the video starts after the audio; 0 when it starts with or before it."
+    },
+    "timing": {
+      "type": "object",
+      "description": "How video times were placed on the unified audio timeline (added in 1.1.0; absent in 1.0.0 documents, whose times counted frame_index / average fps from the first video frame and ignored stream offsets and VFR). Every time in this document is the frame's presentation timestamp minus the presentation timestamp of the first sample of source_audio.flac.",
+      "required": ["offset_seconds", "vfr"],
+      "properties": {
+        "offset_seconds": {
+          "type": "number",
+          "description": "First video frame's presentation time minus the audio origin (t = 0), seconds, 3 dp. Positive: the video starts after the audio. Negative: the video starts before the audio; frames presented before t = 0 are outside the timeline and excluded from the shots (start_frame of shot 0 is then > 0)."
+        },
+        "vfr": {
+          "type": "boolean",
+          "description": "true when the stream's frame intervals are not constant (variable frame rate, or dropped/duplicated frames): any interval deviates from the median by more than 10 % and by more than 1.1 ms (one 1 ms container tick, so millisecond-timebase rounding of a constant rate is not VFR). Times and frame indices are exact either way (taken from per-frame timestamps); the flag tells consumers not to derive times as index / fps."
+        }
+      }
     },
     "detector": {
       "type": "object",
@@ -47,8 +62,8 @@
           "index": { "type": "integer", "minimum": 0, "description": "0-based shot number; frames/shot_%04d filenames use index+1." },
           "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
           "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
-          "start_frame": { "type": "integer", "minimum": 0, "description": "Source-video frame index, for reference back into the original file." },
-          "end_frame": { "type": "integer", "minimum": 0, "description": "Exclusive." },
+          "start_frame": { "type": "integer", "minimum": 0, "description": "Index of the frame in the analysed video stream's decoded frames, in presentation order, counted from the first frame the decoder outputs (packets it discards, e.g. leading non-keyframes of a stream-copy cut, are not frames), for reference back into the original file. Not index / fps: on VFR input frames are not evenly spaced." },
+          "end_frame": { "type": "integer", "minimum": 0, "description": "Exclusive. The last shot's end_frame is the number of frames in the stream." },
           "representative_frames": {
             "type": "array",
             "minItems": 1,
@@ -86,7 +101,7 @@
           },
           "motion": {
             "type": "object",
-            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip. Degenerate case: a shot too short to contain any 12 fps sample pair (< ~1/6 s) carries no motion evidence and reports 0.0/0.0, indistinguishable from static by design.",
+            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Each 12 fps sample shows the latest frame presented at or before its own time and belongs to that frame's shot; a sample pair counts only when both samples are in the shot, so the pair straddling a cut (flow between two unrelated images) belongs to no shot. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip. Degenerate case: a shot too short to contain two 12 fps samples (< ~1/6 s) carries no motion evidence and reports 0.0/0.0, indistinguishable from static by design.",
             "required": ["mean", "p95"],
             "properties": {
               "mean": { "type": "number", "minimum": 0 },
