@@ -36,7 +36,7 @@ def test_decode_hash_survives_large_stderr(tmp_path, monkeypatch):
     old = signal.signal(signal.SIGALRM, _hung)
     signal.alarm(20)
     try:
-        sha, duration = ingest._decode_hash_and_duration(tmp_path / "in.wav", 44100, 2)
+        sha, duration = ingest._decode_hash_and_duration(tmp_path / "in.wav", 44100, 2, 0)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)

@@ -9,7 +9,7 @@
     "source": {
       "status": "ok",
       "path": "source.json",
-      "schema_version": "1.0.0",
+      "schema_version": "1.1.0",
       "content_sha256": "9c41d8a2e77f10b3554a6c09deed21c8830f47ab19e5d2c6704b8f3a1e09c5d2",
       "config_hash": "a1b2c3d4e5f60718",
       "run": {
@@ -46,7 +46,7 @@
     "video": {
       "status": "ok",
       "path": "video.json",
-      "schema_version": "1.0.0",
+      "schema_version": "1.1.0",
       "content_sha256": "c3d1a09e8b2f47651d30cc47a2e98105f7b6d4093ae8c12f60594b7d21e0af38",
       "config_hash": "1122334455667788",
       "run": {

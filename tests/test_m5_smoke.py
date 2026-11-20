@@ -60,13 +60,16 @@ def test_representative_times() -> None:
 
 
 def test_shot_partition_invariants() -> None:
-    shots = normalize_shots([(48, 96), (0, 48), (96, 120)], fps=24.0)
+    times = [round(i / 24.0, 3) for i in range(121)]  # 120 frames + end
+    shots = normalize_shots([(48, 96), (0, 48), (96, 120)], times)
     assert [(s[0], s[1]) for s in shots] == [(0, 48), (48, 96), (96, 120)]
-    assert shots[0][2] == 0.0 and shots[0][3] == 2.0  # frame-derived times
+    assert shots[0][2] == 0.0 and shots[0][3] == 2.0  # frame-table times
     with pytest.raises(VideoError):
-        normalize_shots([(0, 48), (50, 96)], fps=24.0)  # gap
+        normalize_shots([(0, 48), (50, 96)], times)  # gap
     with pytest.raises(VideoError):
-        normalize_shots([(0, 48), (48, 48)], fps=24.0)  # empty shot
+        normalize_shots([(0, 48), (48, 48)], times)  # empty shot
+    with pytest.raises(VideoError):
+        normalize_shots([(0, 48), (48, 121)], times)  # past the last frame
 
 
 def test_palette_known_clusters() -> None:

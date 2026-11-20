@@ -40,7 +40,11 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     # 2: palette clustered from per-frame downscaled pixels (was averages
     #    of whole image rows — VID-1); rotation-aware frame geometry
     #    (portrait phone video decoded scrambled — VID-4).
-    "video": 2,
+    # 3: times on the audio timeline from a packet-pts frame table (stream
+    #    start offsets, VFR — VID-2); last shot ends at the frames that
+    #    exist (VID-11); the motion pass shares the shots' origin; motion
+    #    pairs straddling a cut belong to no shot (VID-3).
+    "video": 3,
 }
 
 

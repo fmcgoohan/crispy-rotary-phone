@@ -13,7 +13,9 @@ from pydantic import BaseModel
 
 # Per-document schema versions (PR #6 review, S2: never share a version
 # constant across documents — schemas evolve independently).
-SOURCE_SCHEMA_VERSION = "1.0.0"
+# source 1.1.0: additive — media.audio.stream_index / stream_count (which
+# audio stream was analysed, chosen explicitly — ORCH-13).
+SOURCE_SCHEMA_VERSION = "1.1.0"
 # audio_features 1.1.0: additive — optional `gate` on onsets (FEAT-1 level
 # gate, S4); tempo.confidence redefined as onset support (FEAT-3; same
 # field, same range, description updated).
@@ -21,7 +23,9 @@ AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
 LYRICS_SCHEMA_VERSION = "1.1.0"
-VIDEO_SCHEMA_VERSION = "1.0.0"
+# video 1.1.0: additive — `timing` (offset of the video clock from the audio
+# origin, vfr indicator); every time now on the audio timeline (VID-2).
+VIDEO_SCHEMA_VERSION = "1.1.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -66,6 +70,8 @@ class MediaAudio(BaseModel):
     sample_rate: int
     channels: int
     bit_rate: Optional[int] = None
+    stream_index: Optional[int] = None
+    stream_count: Optional[int] = None
 
 
 class MediaVideo(BaseModel):
@@ -235,10 +241,16 @@ class Shot(BaseModel):
     caption: Optional[ShotCaption] = None
 
 
+class VideoTiming(BaseModel):
+    offset_seconds: float
+    vfr: bool
+
+
 class VideoDocument(BaseModel):
     schema_version: str = VIDEO_SCHEMA_VERSION
     track_id: str
     video_span: Interval
+    timing: Optional[VideoTiming] = None
     detector: Detector
     caption_backend: CaptionBackendInfo
     shots: list[Shot]
