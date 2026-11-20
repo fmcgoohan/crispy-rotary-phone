@@ -23,7 +23,7 @@
         },
         "vfr": {
           "type": "boolean",
-          "description": "true when the stream's frame intervals are not constant (variable frame rate, or dropped/duplicated frames): any interval deviates from the median by more than 10 %. Times and frame indices are exact either way (taken from per-frame timestamps); the flag tells consumers not to derive times as index / fps."
+          "description": "true when the stream's frame intervals are not constant (variable frame rate, or dropped/duplicated frames): any interval deviates from the median by more than 10 % and by more than 1.1 ms (one 1 ms container tick, so millisecond-timebase rounding of a constant rate is not VFR). Times and frame indices are exact either way (taken from per-frame timestamps); the flag tells consumers not to derive times as index / fps."
         }
       }
     },
@@ -62,7 +62,7 @@
           "index": { "type": "integer", "minimum": 0, "description": "0-based shot number; frames/shot_%04d filenames use index+1." },
           "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
           "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
-          "start_frame": { "type": "integer", "minimum": 0, "description": "Index of the frame in the analysed video stream's decode output order (presentation order, the `n` of ffmpeg's select filter), for reference back into the original file. Not index / fps: on VFR input frames are not evenly spaced." },
+          "start_frame": { "type": "integer", "minimum": 0, "description": "Index of the frame in the analysed video stream's decoded frames, in presentation order, counted from the first frame the decoder outputs (packets it discards, e.g. leading non-keyframes of a stream-copy cut, are not frames), for reference back into the original file. Not index / fps: on VFR input frames are not evenly spaced." },
           "end_frame": { "type": "integer", "minimum": 0, "description": "Exclusive. The last shot's end_frame is the number of frames in the stream." },
           "representative_frames": {
             "type": "array",
@@ -101,7 +101,7 @@
           },
           "motion": {
             "type": "object",
-            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Each 12 fps sample belongs to the shot containing its own time; a sample pair counts only when both samples are in the shot, so the pair straddling a cut (flow between two unrelated images) belongs to no shot. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip. Degenerate case: a shot too short to contain two 12 fps samples (< ~1/6 s) carries no motion evidence and reports 0.0/0.0, indistinguishable from static by design.",
+            "description": "Dense optical-flow magnitude (Farnebäck, 12 fps, 320 px pass), normalized by frame diagonal — dimensionless and comparable across videos. Each 12 fps sample shows the latest frame presented at or before its own time and belongs to that frame's shot; a sample pair counts only when both samples are in the shot, so the pair straddling a cut (flow between two unrelated images) belongs to no shot. Rough scale: <0.002 static, 0.002–0.01 gentle movement, >0.03 fast action or camera whip. Degenerate case: a shot too short to contain two 12 fps samples (< ~1/6 s) carries no motion evidence and reports 0.0/0.0, indistinguishable from static by design.",
             "required": ["mean", "p95"],
             "properties": {
               "mean": { "type": "number", "minimum": 0 },

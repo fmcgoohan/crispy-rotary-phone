@@ -23,13 +23,16 @@ from typer.testing import CliRunner
 
 from mrw import ingest
 from mrw.cli import app
+from mrw.library import PrerequisiteError
 from mrw.video import (
     Timeline,
     VideoError,
+    _audio_stream_index,
     frame_table_from_packets,
     is_vfr,
     representative_index,
     shot_bounds,
+    trim_to_first_decoded,
 )
 
 needs_ffmpeg = pytest.mark.skipif(
@@ -117,6 +120,25 @@ def test_ingest_without_default_flag_takes_first_audio_stream(tmp_path: Path) ->
     assert abs(_dominant_hz(track / "source_audio.flac") - 440) < 5
 
 
+@needs_ffmpeg
+def test_pre_1_1_source_with_several_audio_streams_is_not_guessed(tmp_path: Path) -> None:
+    # Review C-4: a source.json without media.audio.stream_index was decoded
+    # by ffmpeg's automatic choice (here it would take the stereo stream 1).
+    # Re-applying the new rule would measure t0 on stream 0 — so ask for a
+    # re-ingest instead of guessing.
+    media = tmp_path / "no_default.mka"
+    _two_audio_streams(media, ("0", "0"))
+    legacy = {"media": {"audio": {"channels": 2}}}
+    with pytest.raises(PrerequisiteError, match="re-ingest|Re-ingest"):
+        _audio_stream_index(media, legacy)
+    recorded = {"media": {"audio": {"stream_index": 1}}}
+    assert _audio_stream_index(media, recorded) == 1
+    single = tmp_path / "one.mka"
+    _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1:sample_rate=44100",
+            "-c:a", "flac", str(single))
+    assert _audio_stream_index(single, legacy) == 0
+
+
 # --- VID-2 / VID-11: pure timeline helpers ---------------------------------------
 
 def test_frame_table_sorts_skips_discard_and_uses_last_duration() -> None:
@@ -145,6 +167,23 @@ def test_vfr_indicator() -> None:
     vfr = [i / 30 for i in range(60)] + [2 + i / 15 for i in range(30)]
     assert not is_vfr(cfr) and not is_vfr(mkv_ms)
     assert is_vfr(vfr)
+    # Review C-3: constant 120 fps in a 1 ms timebase alternates 8/9 ms
+    # intervals (12.5 % of the median) — still CFR. A dropped frame is not.
+    mkv_120 = [round(i / 120, 3) for i in range(240)]
+    assert not is_vfr(mkv_120)
+    assert is_vfr(mkv_120[:100] + mkv_120[101:])
+
+
+def test_trim_to_first_decoded() -> None:
+    # Review C-2: packets before the first frame the decoder outputs
+    # (leading non-keyframes of a -copyinkf cut) are not frames.
+    pts = [0.02 + i / 24 for i in range(72)]
+    trimmed = trim_to_first_decoded(pts, pts[24])
+    assert len(trimmed) == 48 and trimmed[0] == pts[24]
+    assert trim_to_first_decoded(pts, None) == pts
+    assert trim_to_first_decoded(pts, pts[0] - 0.00001) == pts
+    with pytest.raises(VideoError):
+        trim_to_first_decoded(pts, 10.0)
 
 
 def test_timeline_offsets_and_clamping() -> None:
@@ -380,3 +419,68 @@ def test_static_textured_shots_stay_static_across_a_hard_cut(tmp_path: Path) -> 
     assert shots[0]["motion"]["p95"] < 0.002
     assert shots[1]["motion"]["p95"] < 0.002
     assert shots[2]["motion"]["mean"] > 0.002  # real movement still measured
+
+
+@needs_ffmpeg
+@pytest.mark.slow
+def test_static_shots_stay_static_when_the_cut_is_off_the_motion_grid(
+    tmp_path: Path,
+) -> None:
+    # Review C-1: 30 fps, hard cut at frame 31 (1.033 s), which is not on
+    # the 1/12 s motion grid. With the fps filter's default round=near the
+    # first sample showing shot B was timed 1.0 s — inside shot A — so the
+    # cross-cut pair landed in shot A (p95 0.006).
+    _texture(tmp_path / "a.png", 1, (320, 240), (255, 120, 60))
+    _texture(tmp_path / "b.png", 2, (320, 240), (60, 120, 255))
+    media = tmp_path / "offgrid.mp4"
+    _ffmpeg(
+        "-loop", "1", "-framerate", "30", "-t", "1.0333333",
+        "-i", str(tmp_path / "a.png"),
+        "-loop", "1", "-framerate", "30", "-t", "1.5", "-i", str(tmp_path / "b.png"),
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=3:sample_rate=44100",
+        "-filter_complex",
+        "[0:v]setsar=1[a];[1:v]setsar=1[b];[a][b]concat=n=2:v=1:a=0,format=yuv420p[v]",
+        "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-qp", "0", "-c:a", "aac",
+        str(media),
+    )
+    doc = _run_video(media, tmp_path / "lib")
+    shots = doc["shots"]
+    assert [(s["start_frame"], s["end_frame"]) for s in shots] == [(0, 31), (31, 76)]
+    assert shots[0]["motion"]["p95"] < 0.002
+    assert shots[1]["motion"]["p95"] < 0.002
+
+
+@needs_ffmpeg
+@pytest.mark.slow
+def test_undecodable_leading_packets_are_not_frames(tmp_path: Path) -> None:
+    # Review C-2: a stream-copy cut 1 s into a 48-frame GOP keeps 24 leading
+    # non-keyframes (-copyinkf) that the h264 decoder discards: 72 packets,
+    # 48 decoded frames. Counting packets shifted every frame index (the
+    # representative frame of a "1.478 s" shot showed pixels from ~2.48 s)
+    # and put frames that never decode inside video_span.
+    src = tmp_path / "src.mp4"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "color=c=red:s=320x240:r=24:d=2.5",
+        "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=24:d=1.5",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=4:sample_rate=44100",
+        "-filter_complex", "[0:v]setsar=1[a];[1:v]setsar=1[b];[a][b]concat=n=2:v=1:a=0[v]",
+        "-map", "[v]", "-map", "2:a",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-bf", "0",
+        "-x264-params", "keyint=48:min-keyint=48:scenecut=0",
+        "-c:a", "aac", str(src),
+    )
+    media = tmp_path / "cut.mkv"
+    _ffmpeg("-i", str(src), "-ss", "1.0", "-c", "copy", "-copyinkf", str(media))
+    packets = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+         "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(media)],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert int(packets) > 48  # the fixture really has undecodable packets
+    doc = _run_video(media, tmp_path / "lib")
+    shots = doc["shots"]
+    assert [(s["start_frame"], s["end_frame"]) for s in shots] == [(0, 12), (12, 48)]
+    span = doc["video_span"]
+    assert span["end_seconds"] - span["start_seconds"] == pytest.approx(2.0, abs=0.002)
+    assert _frame_colour(doc["_track"], shots[0]["representative_frames"][0]) == "red"
+    assert _frame_colour(doc["_track"], shots[1]["representative_frames"][0]) == "blue"
