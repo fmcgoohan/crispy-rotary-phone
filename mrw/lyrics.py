@@ -232,7 +232,7 @@ def resolve_whisper_model(model_name: str) -> str:
     Hub on every run while online and silently pulls a new snapshot if the
     upstream branch moved (LYR-3). CLAUDE.md permits first-use weight
     downloads only, via `mrw models fetch`; transcription runs from the
-    cache.
+    cache, at the revision pinned in mrw/whisper_models.py.
     """
     import os
 
@@ -240,20 +240,41 @@ def resolve_whisper_model(model_name: str) -> str:
         return model_name
     from faster_whisper.utils import download_model
 
+    _, revision = pinned_whisper_model(model_name)
     try:
-        return download_model(model_name, local_files_only=True)
+        return download_model(model_name, local_files_only=True, revision=revision)
     except FileNotFoundError as e:  # huggingface_hub LocalEntryNotFoundError
         raise LyricsError(
-            f"whisper model '{model_name}' is not in the local model cache — "
-            "run `mrw models fetch` first (transcription never downloads)"
+            f"whisper model '{model_name}' (revision {revision[:12]}) is not in "
+            "the local model cache — run `mrw models fetch` first "
+            "(transcription never downloads)"
         ) from e
 
 
-def fetch_whisper_model(model_name: str) -> Path:
-    """Download the Whisper model if absent; returns its local directory."""
-    from faster_whisper import download_model
+def pinned_whisper_model(model_name: str) -> tuple[str, str]:
+    """(repo id, pinned commit) for a faster-whisper size name."""
+    from .whisper_models import WHISPER_MODELS
 
-    return Path(download_model(model_name))
+    try:
+        return WHISPER_MODELS[model_name]
+    except KeyError:
+        raise LyricsError(
+            f"whisper model '{model_name}' has no pinned revision; use one of "
+            f"{', '.join(sorted(WHISPER_MODELS))} or a local model directory"
+        ) from None
+
+
+def fetch_whisper_model(model_name: str) -> Path:
+    """Download the Whisper model at its pinned revision if absent; returns
+    its local directory. A local model directory is returned as is."""
+    import os
+
+    if os.path.isdir(model_name):
+        return Path(model_name)
+    from faster_whisper.utils import download_model
+
+    _, revision = pinned_whisper_model(model_name)
+    return Path(download_model(model_name, revision=revision))
 
 
 def parse_supplied_lyrics(
