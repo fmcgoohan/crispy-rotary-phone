@@ -383,6 +383,46 @@ def test_aligned_document_with_markup(tmp_path, monkeypatch) -> None:
     assert abs(regions[0]["end_seconds"] - 4.0) < 0.1
 
 
+def test_aligned_keeps_unmatched_words_and_line_indexes(tmp_path, monkeypatch) -> None:
+    # CRIT-1 / LYR-9 / SCH-3 through run_lyrics: the file omits an ad-lib
+    # that Whisper heard in the second vocal burst, and ends with a line
+    # nothing anchors. Double-run byte identity covers the aligned path.
+    mix = _click_track(10.0)
+    vocals = _bursty_vocals(10.0)
+    lyrics_text = "[Verse 1]\nhello world\nzzz qqq xxx vvv\n"
+    segments = [
+        _seg("hello world", 2.2, 3.2),
+        _seg("ooh yeah ooh yeah", 6.1, 7.9),
+    ]
+    docs = []
+    for name in ("lib_a", "lib_b"):
+        library = tmp_path / name
+        track_id = _fabricate(
+            library, mix + vocals * 0.5, {"vocals": vocals}, tmp_path, lyrics_text
+        )
+        _stub_engine(monkeypatch, segments)
+        result = runner.invoke(app, ["lyrics", track_id, "--library", str(library)])
+        assert result.exit_code == 0, result.output
+        docs.append((library / track_id / "lyrics.json").read_bytes())
+    assert docs[0] == docs[1]
+    doc = json.loads(docs[0])
+    _validate(doc, "lyrics.schema.json")
+    assert doc["schema_version"] == "1.2.0"
+
+    by_text = {l["text"]: l for l in doc["lines"]}
+    assert by_text["hello world"]["source_line_index"] == 1
+    assert by_text["zzz qqq xxx vvv"]["source_line_index"] == 2
+    assert "unaligned" in by_text["zzz qqq xxx vvv"]["flags"]
+    assert [w["text"] for w in doc["unmatched_words"]] == ["ooh", "yeah", "ooh", "yeah"]
+    # The ad-lib burst is covered: nothing untranscribed around 6-8 s.
+    assert not any(
+        r["start_seconds"] < 7.9 and r["end_seconds"] > 6.1
+        for r in doc["untranscribed_regions"]
+    )
+    for line in doc["lines"]:
+        assert 0.0 <= line["start_seconds"] <= line["end_seconds"] <= 10.0
+
+
 def test_lyrics_double_run_byte_identity(tmp_path, monkeypatch) -> None:
     mix = _click_track(8.0)
     vocals = _bursty_vocals(8.0)

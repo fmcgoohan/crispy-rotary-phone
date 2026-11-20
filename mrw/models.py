@@ -17,7 +17,9 @@ SOURCE_SCHEMA_VERSION = "1.0.0"
 AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
-LYRICS_SCHEMA_VERSION = "1.1.0"
+# 1.2.0: additive — lines[].source_line_index and top-level unmatched_words
+# in aligned mode (analysis findings LYR-9, CRIT-1).
+LYRICS_SCHEMA_VERSION = "1.2.0"
 VIDEO_SCHEMA_VERSION = "1.0.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
@@ -260,6 +262,7 @@ class LyricsLine(BaseModel):
     confidence: Optional[float] = None
     flags: list[str]
     words: list[LyricsWord]
+    source_line_index: Optional[int] = None
 
 
 class SuppliedMarkup(BaseModel):
@@ -289,6 +292,7 @@ class LyricsDocument(BaseModel):
     engine: LyricsEngine
     lines: list[LyricsLine]
     supplied_markup: Optional[list[SuppliedMarkup]] = None
+    unmatched_words: Optional[list[LyricsWord]] = None
     untranscribed_regions: list[UntranscribedRegion]
     coverage: LyricsCoverage
 

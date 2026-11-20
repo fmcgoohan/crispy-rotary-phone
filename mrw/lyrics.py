@@ -1,5 +1,5 @@
 """Stage 4 — lyrics per PLAN §4 stage 4; contract: schemas/lyrics.schema.json
-v1.1.0.
+v1.2.0.
 
 Mode `aligned` when the track was ingested with a lyrics file, else
 `transcribed`. Transcription: faster-whisper (`small`, int8, CPU) on the
@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, lrc, versions
-from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
+from .align import AnchoredLine, SuppliedLine, WordObs, align
 from .library import Library, PrerequisiteError, mark_dependents_stale
 from .models import (
     DocumentEntry,
@@ -435,9 +435,13 @@ def _coverage_and_untranscribed(
     lines: list[LyricsLine],
     vocal_regions: list[dict],
     min_uncovered_seconds: float,
+    unmatched_words: list[LyricsWord] | None = None,
 ) -> tuple[LyricsCoverage, list[UntranscribedRegion]]:
+    # CRIT-1: heard words no supplied line accounts for still cover their
+    # audio — untranscribed means "content unknown", not "not in the file".
     spans = sorted(
-        (w.start_seconds, w.end_seconds) for line in lines for w in line.words
+        [(w.start_seconds, w.end_seconds) for line in lines for w in line.words]
+        + [(w.start_seconds, w.end_seconds) for w in unmatched_words or []]
     )
     merged: list[list[float]] = []
     for s, e in spans:
@@ -585,18 +589,22 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
         all_words = [w for seg in segments for w in seg.words]
 
         supplied_markup = None
+        unmatched_words = None
         lines: list[LyricsLine] = []
         if mode == "aligned":
             raw = lrc.decode_text((track_dir / lyrics_input["path"]).read_bytes())
             supplied_lines, markup_entries = parse_supplied_lyrics(raw)
             supplied_markup = markup_entries or None
-            anchored = align_lines(
+            alignment = align(
                 supplied_lines,
                 all_words,
                 cfg.lyrics.min_anchor_score,
                 duration=duration,
             )
-            for a in anchored:
+            unmatched_words = _words_from_obs(
+                sorted(alignment.unmatched, key=lambda w: w.start)  # stable
+            )
+            for a in alignment.lines:
                 words = _words_from_pairs(a.words)
                 span = (a.start, a.end)
                 lines.append(
@@ -610,6 +618,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
                             region_tuples,
                         ),
                         words=words,
+                        source_line_index=a.source_line_index,
                     )
                 )
         else:
@@ -647,6 +656,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
             lines,
             features_doc["vocal_activity"]["regions"],
             cfg.lyrics.uncovered_min_seconds,
+            unmatched_words,
         )
         document = LyricsDocument(
             track_id=track_id,
@@ -659,6 +669,7 @@ def run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResult
             ),
             lines=lines,
             supplied_markup=supplied_markup,
+            unmatched_words=unmatched_words,
             untranscribed_regions=untranscribed,
             coverage=coverage,
         )

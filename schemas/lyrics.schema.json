@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lyrics.schema.json",
   "title": "lyrics.json — timed lyrics with confidence and honesty flags",
-  "description": "Produced either by aligning a supplied lyrics file to the audio (mode 'aligned') or by transcribing the isolated vocal stem with Whisper (mode 'transcribed'). Uncertainty is explicit: per-word confidence, per-line flags, and untranscribed_regions listing sung passages the system could not read. Consumers must treat flagged content as suspect rather than assume completeness.",
+  "description": "Produced either by aligning a supplied lyrics file to the audio (mode 'aligned') or by transcribing the isolated vocal stem with Whisper (mode 'transcribed'). Uncertainty is explicit: per-word confidence, per-line flags, untranscribed_regions listing sung passages the system could not read, and (aligned mode) unmatched_words listing words Whisper heard that the supplied file does not account for. Consumers must treat flagged content as suspect rather than assume completeness.",
   "type": "object",
   "required": ["schema_version", "track_id", "mode", "language", "engine", "lines", "untranscribed_regions", "coverage"],
   "properties": {
@@ -33,7 +33,7 @@
     },
     "lines": {
       "type": "array",
-      "description": "Sorted by start_seconds. In aligned mode, lines mirror the supplied file's line breaks; in transcribed mode, lines are Whisper segments.",
+      "description": "Sorted by start_seconds. In aligned mode, lines mirror the supplied file's sung lines (one entry per line; an .lrc line carrying several time tags yields one entry per tag, all with its source_line_index), anchored to the transcript by a global monotone alignment: lines keep file order on the timeline (an .lrc file's hinted lines are taken in hint order) and no transcript word serves two lines. Unanchored lines ('unaligned') get line timing only: a hinted line starts at its .lrc hint corrected by the track-wide hint offset the aligner estimates; k consecutive unhinted lines are spread evenly over the gap between their neighbours (at most 10 s each), or 4 s each when nothing follows. Zero-anchor convention: when no line anchors and none is hinted, lines are laid out in file order from 0 s, 4 s each (squeezed evenly when the track is shorter). Every time lies in [0, track duration]. In transcribed mode, lines are Whisper segments.",
       "items": {
         "type": "object",
         "required": ["text", "start_seconds", "end_seconds", "words", "flags"],
@@ -59,7 +59,7 @@
                 "outside_vocal_activity"
               ]
             },
-            "description": "low_confidence: mean word confidence below threshold (config, default 0.5). possibly_non_lexical: hallucination heuristics fired (no_speech_prob / compression_ratio / dictionary hit rate) — text may be invented. overlapping_vocals: sustained dense vocal-stem energy suggests harmonies; words may be merged. long_word_duration: a word exceeds ~2.5 s (melisma); timings smeared. unaligned (aligned mode): line found no transcript anchor; timing absent-quality, taken from lrc hint or neighbor interpolation. timing_interpolated: word times inferred from neighbors rather than observed. outside_vocal_activity: the line's span overlaps no vocal-activity region — likely hallucinated over instrumental audio; flagged, never dropped (added in 1.1.0)."
+            "description": "low_confidence: mean word confidence below threshold (config, default 0.5). possibly_non_lexical: hallucination heuristics fired (no_speech_prob / compression_ratio / dictionary hit rate) — text may be invented. overlapping_vocals: sustained dense vocal-stem energy suggests harmonies; words may be merged. long_word_duration: a word exceeds ~2.5 s (melisma); timings smeared. unaligned (aligned mode): line found no transcript anchor; timing absent-quality, taken from lrc hint or neighbor interpolation. timing_interpolated: word times inferred from neighbors rather than observed — on an anchored line, some supplied words had no matching heard word (their times are interpolated between matched neighbours) or two supplied words were heard as one (they split its span). outside_vocal_activity: the line's span overlaps no vocal-activity region — likely hallucinated over instrumental audio; flagged, never dropped (added in 1.1.0)."
           },
           "words": {
             "type": "array",
@@ -73,10 +73,15 @@
                 "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
                 "confidence": {
                   "$ref": "common.schema.json#/$defs/confidence",
-                  "description": "transcribed mode: Whisper word probability. aligned mode: token match score between supplied word and transcript anchor."
+                  "description": "transcribed mode: Whisper word probability. aligned mode: token match score between supplied word and the heard word it was paired with by content (for an interpolated word, its best score against the unpaired heard words around it; 0 when there are none)."
                 }
               }
             }
+          },
+          "source_line_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Aligned mode only: 0-based line number in the supplied lyrics file (same numbering as supplied_markup[].source_line_index), so a line can be tied to the section header above it even after the timeline sort (added in 1.2.0)."
           }
         }
       }
@@ -106,9 +111,23 @@
         }
       }
     },
+    "unmatched_words": {
+      "type": "array",
+      "description": "Aligned mode only (always present there, possibly empty): words Whisper heard that no supplied line was paired with — passages the file omits (repeats it does not write out, ad-libs, backing vocals) or words inserted inside a line. Text and timing are Whisper's; confidence is the Whisper word probability. Sorted by start_seconds. They count toward coverage, so untranscribed_regions keeps meaning 'vocals here, content unknown' (added in 1.2.0).",
+      "items": {
+        "type": "object",
+        "required": ["text", "start_seconds", "end_seconds", "confidence"],
+        "properties": {
+          "text": { "type": "string" },
+          "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
+          "confidence": { "$ref": "common.schema.json#/$defs/confidence" }
+        }
+      }
+    },
     "untranscribed_regions": {
       "type": "array",
-      "description": "Uncovered spans of vocal activity: the word-covered intervals are subtracted from the vocal-activity regions (audio_features.json). A region with zero word coverage is always emitted whole regardless of length (the 1.0.0 guarantee, preserved — strict superset); fragments of partially-covered regions are emitted when at least `uncovered_min_seconds` long (config, default 1.0). Sharper than the 1.0.0 region-granularity definition, which hid partial misses inside partially-covered regions (review 007 field finding 3; sharpened in 1.1.0 — same shape). The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
+      "description": "Uncovered spans of vocal activity: the word-covered intervals (lines[].words and, in aligned mode, unmatched_words; zero-length words cover nothing) are subtracted from the vocal-activity regions (audio_features.json). A region with zero word coverage is always emitted whole regardless of length (the 1.0.0 guarantee, preserved — strict superset); fragments of partially-covered regions are emitted when at least `uncovered_min_seconds` long (config, default 1.0). Sharper than the 1.0.0 region-granularity definition, which hid partial misses inside partially-covered regions (review 007 field finding 3; sharpened in 1.1.0 — same shape). The honesty ledger: an LLM consumer should say 'vocals here, content unknown', never pretend silence.",
       "items": { "$ref": "common.schema.json#/$defs/interval" }
     },
     "coverage": {
@@ -117,7 +136,7 @@
       "properties": {
         "vocal_activity_covered_ratio": {
           "$ref": "common.schema.json#/$defs/confidence",
-          "description": "Fraction of total vocal-activity time overlapped by at least one word."
+          "description": "Fraction of total vocal-activity time overlapped by at least one word (lines[].words and unmatched_words)."
         },
         "lines_flagged_ratio": {
           "$ref": "common.schema.json#/$defs/confidence",
