@@ -48,6 +48,24 @@ package fights Python 3.11. **Recommendation: ship v1 with the
 later** (e.g. Beat This, MIT-ish — needs a license/maturity check). Most of
 the target material is 4/4 pop; the schema already tells consumers when bar
 indices are approximate.
+**Resolution (feature-measure fixes, FEAT-1/3/8, DET-11, SCH-9):** the beat
+grid around the phase fit changed. beat_track now runs with trim=True, so
+beatless intros/outros carry no beats (interior breakdowns are still
+filled). tempo.confidence no longer scores inter-beat regularity (regular by
+construction); it is the beats' onset support against off-beat probes at
+k/7 of a beat (the minimum over the six), normalised by the p90 on-beat
+strength (formula in the schema). A first draft probed only 1/3 and 2/3 of
+a beat, which sit exactly on triplet hats and scored correctly-tracked
+shuffles and 12/8 as beatless (review D-1); the 1/7 points miss every
+common subdivision, leaving septuplets as the blind spot. It cannot detect
+half/double-tempo errors. A mix with no beat evidence (published mix rms at
+the −80 dB floor throughout — dither counts, review D-2 — or no beats
+tracked) fails
+the features stage (exit 1, manifest failed) so bpm_global keeps its
+exclusiveMinimum 0 promise; the alternative of relaxing it to 0.0 was
+rejected as a consumer-breaking change. Onsets are level-gated relative to
+the mix (`features.onset_gate_relative_db`, default −30 dB, embedded as
+onsets.gate; audio_features 1.1.0).
 
 **OQ-5 — Vocal-activity thresholds.**
 Enter −35 dBFS / exit −45 dBFS hysteresis, min region 300 ms, min gap 200 ms

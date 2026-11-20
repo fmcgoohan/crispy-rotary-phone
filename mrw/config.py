@@ -58,6 +58,12 @@ class FeaturesConfig(_Section):
     # Downbeat phase-fit onset-sampling half-window (review 006 F-1): a
     # tuning knob, so it participates in the features config_hash.
     phase_fit_window_seconds: float = Field(default=0.03, gt=0)
+    # Stem onset gate relative to the mix (FEAT-1): a stem onset is dropped
+    # when the stem's rms_db at that frame is more than this many dB below
+    # the mix's. Added after M3: joining the config_hash re-stales every
+    # existing features document — deliberate (config-evolution policy,
+    # review 006). Embedded in each stem's onsets.gate (S4).
+    onset_gate_relative_db: float = Field(default=-30.0, le=0)
 
 
 class LyricsConfig(_Section):
