@@ -28,11 +28,11 @@ from mrw.video import (
     Timeline,
     VideoError,
     _audio_stream_index,
-    frame_table_from_packets,
+    count_undecodable,
+    frame_table_from_frames,
     is_vfr,
     representative_index,
     shot_bounds,
-    trim_to_first_decoded,
 )
 
 needs_ffmpeg = pytest.mark.skipif(
@@ -141,24 +141,37 @@ def test_pre_1_1_source_with_several_audio_streams_is_not_guessed(tmp_path: Path
 
 # --- VID-2 / VID-11: pure timeline helpers ---------------------------------------
 
-def test_frame_table_sorts_skips_discard_and_uses_last_duration() -> None:
-    packets = [  # decode order (B-frames): pts not monotonic
-        {"pts_time": "0.500000", "duration_time": "0.033333", "flags": "K__"},
-        {"pts_time": "0.566667", "duration_time": "0.033333", "flags": "___"},
-        {"pts_time": "0.533333", "duration_time": "0.033333", "flags": "___"},
-        {"pts_time": "0.600000", "duration_time": "0.066667", "flags": "___"},
-        {"pts_time": "0.466667", "duration_time": "0.033333", "flags": "_D_"},
+def test_frame_table_sorts_and_uses_last_duration() -> None:
+    frames = [  # decoded frames; best-effort timestamp preferred over pts
+        {"best_effort_timestamp_time": "0.500000", "pts_time": "N/A",
+         "duration_time": "0.033333"},
+        {"best_effort_timestamp_time": "0.566667", "duration_time": "0.033333"},
+        {"best_effort_timestamp_time": "0.533333", "duration_time": "0.033333"},
+        {"pts_time": "0.600000", "duration_time": "0.066667"},
     ]
-    pts, end = frame_table_from_packets(packets, 30.0)
+    pts, end = frame_table_from_frames(frames, 30.0)
     assert pts == [0.5, 0.533333, 0.566667, 0.6]
     assert end == pytest.approx(0.666667)  # last frame's own duration (VFR-safe)
 
 
 def test_frame_table_without_timestamps_is_synthesised() -> None:
-    packets = [{"pts_time": "N/A", "flags": "K__"}] * 3
-    assert frame_table_from_packets(packets, 10.0) == ([0.0, 0.1, 0.2], 0.3)
+    frames = [{"pts_time": "N/A"}] * 3
+    assert frame_table_from_frames(frames, 10.0) == ([0.0, 0.1, 0.2], 0.3)
     with pytest.raises(VideoError):
-        frame_table_from_packets([], 10.0)
+        frame_table_from_frames([], 10.0)
+
+
+def test_count_undecodable_matches_packets_to_decoded_frames() -> None:
+    # Review C-2 and mid-stream damage: packets with no decoded frame are
+    # counted; discard-flagged packets are not; decode order is irrelevant.
+    pts = [round(0.02 + i / 24, 6) for i in range(10)]
+    packets = [{"pts_time": f"{t:.6f}", "flags": "___"} for t in reversed(pts)]
+    packets.append({"pts_time": "0.000000", "flags": "_D_"})
+    assert count_undecodable(packets, pts) == 0
+    decoded = pts[3:5] + pts[6:]  # 3 leading + 1 mid-stream lost
+    assert count_undecodable(packets, decoded) == 4
+    no_ts = [{"pts_time": "N/A", "flags": "___"}] * 10
+    assert count_undecodable(no_ts, decoded) == 4
 
 
 def test_vfr_indicator() -> None:
@@ -172,18 +185,6 @@ def test_vfr_indicator() -> None:
     mkv_120 = [round(i / 120, 3) for i in range(240)]
     assert not is_vfr(mkv_120)
     assert is_vfr(mkv_120[:100] + mkv_120[101:])
-
-
-def test_trim_to_first_decoded() -> None:
-    # Review C-2: packets before the first frame the decoder outputs
-    # (leading non-keyframes of a -copyinkf cut) are not frames.
-    pts = [0.02 + i / 24 for i in range(72)]
-    trimmed = trim_to_first_decoded(pts, pts[24])
-    assert len(trimmed) == 48 and trimmed[0] == pts[24]
-    assert trim_to_first_decoded(pts, None) == pts
-    assert trim_to_first_decoded(pts, pts[0] - 0.00001) == pts
-    with pytest.raises(VideoError):
-        trim_to_first_decoded(pts, 10.0)
 
 
 def test_timeline_offsets_and_clamping() -> None:
@@ -225,7 +226,7 @@ def _run_video(media: Path, library: Path) -> dict:
     result = runner.invoke(app, ["video", track.name, "--library", str(library)])
     assert result.exit_code == 0, result.output
     doc = json.loads((track / "video.json").read_text())
-    assert doc["schema_version"] == "1.1.0"
+    assert doc["schema_version"] == "1.2.0"
     shots = doc["shots"]
     assert shots[0]["start_seconds"] == doc["video_span"]["start_seconds"]
     assert shots[-1]["end_seconds"] == doc["video_span"]["end_seconds"]
@@ -270,7 +271,7 @@ def test_video_starting_after_audio_is_on_the_audio_clock(tmp_path: Path) -> Non
     _ffmpeg("-itsoffset", "0.5", "-i", str(video), "-i", str(tmp_path / "a.m4a"),
             "-map", "0:v", "-map", "1:a", "-c", "copy", str(media))
     doc = _run_video(media, tmp_path / "lib")
-    assert doc["timing"] == {"offset_seconds": 0.5, "vfr": False}
+    assert doc["timing"] == {"offset_seconds": 0.5, "vfr": False, "undecodable_frames": 0}
     assert doc["video_span"] == {"start_seconds": 0.5, "end_seconds": 4.5}
     shots = doc["shots"]
     assert [(s["start_frame"], s["end_frame"]) for s in shots] == [(0, 48), (48, 96)]
@@ -319,7 +320,7 @@ def test_vfr_clip_gets_exact_frame_indices_and_times(tmp_path: Path) -> None:
             "-f", "lavfi", "-i", "sine=frequency=440:duration=4:sample_rate=44100",
             "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", str(media))
     doc = _run_video(media, tmp_path / "lib")
-    assert doc["timing"] == {"offset_seconds": 0.0, "vfr": True}
+    assert doc["timing"] == {"offset_seconds": 0.0, "vfr": True, "undecodable_frames": 0}
     shots = doc["shots"]
     assert [(s["start_frame"], s["end_frame"]) for s in shots] == [(0, 60), (60, 90)]
     assert shots[0]["end_seconds"] == 2.0
@@ -484,3 +485,4 @@ def test_undecodable_leading_packets_are_not_frames(tmp_path: Path) -> None:
     assert span["end_seconds"] - span["start_seconds"] == pytest.approx(2.0, abs=0.002)
     assert _frame_colour(doc["_track"], shots[0]["representative_frames"][0]) == "red"
     assert _frame_colour(doc["_track"], shots[1]["representative_frames"][0]) == "blue"
+    assert doc["timing"]["undecodable_frames"] == 24  # the discarded lead-in

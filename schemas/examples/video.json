@@ -1,6 +1,6 @@
 {
   "_note": "Worked example, truncated: the real document carries all 78 shots as a contiguous partition of 0..242.5. Keys prefixed with _ are documentation-only.",
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "track_id": "3f9a1c7e2b8d4056",
   "video_span": {
     "start_seconds": 0.0,
@@ -8,7 +8,8 @@
   },
   "timing": {
     "offset_seconds": 0.0,
-    "vfr": false
+    "vfr": false,
+    "undecodable_frames": 0
   },
   "detector": {
     "name": "pyscenedetect_content",

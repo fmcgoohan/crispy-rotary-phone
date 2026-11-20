@@ -125,3 +125,62 @@ def test_shots_follow_the_analysed_stream_not_the_first(tmp_path: Path,
     assert [s["start_seconds"] for s in shots] == [0.0, 2.0]
     assert {_colour(doc["_track"], r) for r in shots[0]["representative_frames"]} == {"green"}
     assert {_colour(doc["_track"], r) for r in shots[1]["representative_frames"]} == {"yellow"}
+
+
+# --- frames that fail to decode mid-stream --------------------------------------
+
+
+def _damaged_clip(tmp_path: Path) -> Path:
+    """Red 2 s → blue 2 s at 24 fps (no B-frames, one keyframe per 48
+    frames), PCM audio; then packet 24 (pts 1.0 s, a P-frame) has its bytes
+    overwritten by the noise bitstream filter so the decoder rejects it
+    ("Invalid NAL unit size"): 96 packets, 95 decoded frames. +bitexact
+    keeps the remuxed fixture byte-reproducible."""
+    src = tmp_path / "src.mkv"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "color=c=red:s=320x240:r=24:d=2",
+        "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=24:d=2",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=4:sample_rate=44100",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,setsar=1[v]",
+        "-map", "[v]", "-map", "2:a",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-bf", "0",
+        "-x264-params", "keyint=48:min-keyint=48:scenecut=0",
+        "-c:a", "pcm_s16le", str(src),
+    )
+    media = tmp_path / "damaged.mkv"
+    _ffmpeg("-i", str(src), "-map", "0", "-c", "copy", "-fflags", "+bitexact",
+            "-bsf:v", "noise=amount=if(eq(n\\,24)\\,1\\,0)", str(media))
+    counts = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-select_streams", "v:0", "-count_packets",
+         "-count_frames", "-show_entries", "stream=nb_read_packets,nb_read_frames",
+         "-of", "json", str(media)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    stream = json.loads(counts)["streams"][0]
+    # The fixture really has one packet the decoder outputs nothing for.
+    assert (int(stream["nb_read_packets"]), int(stream["nb_read_frames"])) == (96, 95)
+    return media
+
+
+@needs_ffmpeg
+@pytest.mark.slow
+def test_frame_lost_mid_stream_shifts_nothing_and_is_reported(tmp_path: Path) -> None:
+    media = _damaged_clip(tmp_path)
+    doc = _run_video(media, tmp_path / "lib")
+    shots = doc["shots"]
+    # Indices count decoded frames: the blue shot starts at decoded frame
+    # 47 (packet 48), and its time is still the cut's own pts.
+    assert [(s["start_frame"], s["end_frame"]) for s in shots] == [(0, 47), (47, 95)]
+    assert [s["start_seconds"] for s in shots] == [0.0, 2.0]
+    # Last frame 3.958 + its 41 ms Matroska duration (1 ms timebase).
+    assert shots[1]["end_seconds"] == doc["video_span"]["end_seconds"] == 3.999
+    assert doc["timing"]["undecodable_frames"] == 1
+    assert doc["timing"]["vfr"] is True  # the 2-frame gap at 1.0 s
+    # Shot 0's midpoint (1.0 s) is the lost frame: the nearest frame that
+    # exists is used (tie → earlier), never a mislabelled neighbour.
+    rep0 = shots[0]["representative_frames"][0]
+    assert rep0["time_seconds"] == 0.958
+    assert _colour(doc["_track"], rep0) == "red"
+    assert shots[1]["representative_frames"][0]["time_seconds"] == 3.0
+    assert _colour(doc["_track"], shots[1]["representative_frames"][0]) == "blue"
+    assert shots[0]["motion"]["p95"] < 0.002 and shots[1]["motion"]["p95"] < 0.002

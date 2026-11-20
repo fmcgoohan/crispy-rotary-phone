@@ -53,7 +53,10 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     #    exist (VID-11); the motion pass shares the shots' origin; motion
     #    pairs straddling a cut belong to no shot (VID-3).
     # 4: the shot detector reads exactly the analysed video stream (it took
-    #    the file's first video stream, attached pictures included).
+    #    the file's first video stream, attached pictures included); the
+    #    frame table holds decoded frames, not packets, so a packet that
+    #    does not decode mid-stream no longer shifts later frame indices
+    #    (timing.undecodable_frames reports the loss).
     "video": 4,
 }
 
