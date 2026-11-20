@@ -39,7 +39,12 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     # 3: a markup line with several leading time tags yields one markup
     #    entry per tag (was first tag only).
     # 4: supplied_markup is in hint order whenever every entry has a hint.
-    "lyrics": 4,
+    # 5: global monotone line alignment with hint-offset estimation and
+    #    content-based word pairing; unanchored lines spread and clamped to
+    #    [0, duration]; unmatched transcript words kept and counted toward
+    #    coverage; zero-length word spans ignored in uncovered_spans
+    #    (LYR-1/2/8/11, SCH-3, CRIT-1, CRIT-5).
+    "lyrics": 5,
     # 2: palette clustered from per-frame downscaled pixels (was averages
     #    of whole image rows — VID-1); rotation-aware frame geometry
     #    (portrait phone video decoded scrambled — VID-4).

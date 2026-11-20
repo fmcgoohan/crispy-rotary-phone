@@ -1,15 +1,15 @@
 """Stage 4 — lyrics per PLAN §4 stage 4; contract: schemas/lyrics.schema.json
-v1.1.0.
+v1.2.0.
 
 Mode `aligned` when the track was ingested with a lyrics file, else
 `transcribed`. Transcription: faster-whisper (`small`, int8, CPU) on the
 ISOLATED vocal stem (OQ-7), deterministic decode (greedy, temperature 0);
 language detection runs on a window of the earliest vocal-activity audio,
 never a silent stem head (review 007 finding 1), with provenance in
-engine.language_source. Alignment: rapidfuzz anchoring of supplied lines to
-the Whisper word stream (OQ-6, mrw/align.py — pure logic, unit-tested
-without Whisper); `.lrc` timestamps are search-window hints only. Supplied
-markup handled per R-3.
+engine.language_source. Alignment: global monotone rapidfuzz alignment of
+supplied lines to the Whisper word stream (OQ-6, mrw/align.py — pure logic,
+unit-tested without Whisper); `.lrc` timestamps are offset-corrected cost
+hints, never trusted outright. Supplied markup handled per R-3.
 
 Honesty machinery: the seven schema line flags with thresholds from
 LyricsConfig; `untranscribed_regions` = uncovered spans — word-covered
@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import TOOL_VERSION, canonical, config, hashing, inputs, lrc, versions
-from .align import AnchoredLine, SuppliedLine, WordObs, align_lines
+from .align import AnchoredLine, SuppliedLine, WordObs, align
 from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import (
     DocumentEntry,
@@ -398,7 +398,12 @@ def uncovered_spans(
     instead of testing regions whole.
     """
     merged: list[list[float]] = []
-    for s, e in sorted(word_spans):
+    # CRIT-5: a zero-length span (a word Whisper timed start == end, or one
+    # clamped to (duration, duration)) covers nothing, but it would still
+    # split a region's gaps and defeat the whole-region test below — so a
+    # short region holding only such a word vanished from the ledger.
+    # Drop them before merging; coverage is unchanged (they add 0 s).
+    for s, e in sorted(sp for sp in word_spans if sp[1] > sp[0]):
         if merged and s <= merged[-1][1]:
             merged[-1][1] = max(merged[-1][1], e)
         else:
@@ -430,9 +435,13 @@ def _coverage_and_untranscribed(
     lines: list[LyricsLine],
     vocal_regions: list[dict],
     min_uncovered_seconds: float,
+    unmatched_words: list[LyricsWord] | None = None,
 ) -> tuple[LyricsCoverage, list[UntranscribedRegion]]:
+    # CRIT-1: heard words no supplied line accounts for still cover their
+    # audio — untranscribed means "content unknown", not "not in the file".
     spans = sorted(
-        (w.start_seconds, w.end_seconds) for line in lines for w in line.words
+        [(w.start_seconds, w.end_seconds) for line in lines for w in line.words]
+        + [(w.start_seconds, w.end_seconds) for w in unmatched_words or []]
     )
     merged: list[list[float]] = []
     for s, e in spans:
@@ -609,15 +618,22 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
         all_words = [w for seg in segments for w in seg.words]
 
         supplied_markup = None
+        unmatched_words = None
         lines: list[LyricsLine] = []
         if mode == "aligned":
             raw = lrc.decode_text((track_dir / lyrics_input["path"]).read_bytes())
             supplied_lines, markup_entries = parse_supplied_lyrics(raw)
             supplied_markup = markup_entries or None
-            anchored = align_lines(
-                supplied_lines, all_words, cfg.lyrics.min_anchor_score
+            alignment = align(
+                supplied_lines,
+                all_words,
+                cfg.lyrics.min_anchor_score,
+                duration=duration,
             )
-            for a in anchored:
+            unmatched_words = _words_from_obs(
+                sorted(alignment.unmatched, key=lambda w: w.start)  # stable
+            )
+            for a in alignment.lines:
                 words = _words_from_pairs(a.words)
                 span = (a.start, a.end)
                 lines.append(
@@ -631,6 +647,7 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
                             region_tuples,
                         ),
                         words=words,
+                        source_line_index=a.source_line_index,
                     )
                 )
         else:
@@ -668,6 +685,7 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
             lines,
             features_doc["vocal_activity"]["regions"],
             cfg.lyrics.uncovered_min_seconds,
+            unmatched_words,
         )
         document = LyricsDocument(
             track_id=track_id,
@@ -680,6 +698,7 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
             ),
             lines=lines,
             supplied_markup=supplied_markup,
+            unmatched_words=unmatched_words,
             untranscribed_regions=untranscribed,
             coverage=coverage,
         )

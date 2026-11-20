@@ -1,6 +1,6 @@
 {
   "_note": "Worked example, truncated: the real document carries all 42 lines. Lyrics are invented for this hypothetical track. Keys prefixed with _ are documentation-only.",
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "track_id": "3f9a1c7e2b8d4056",
   "mode": "aligned",
   "language": "en",
@@ -26,7 +26,8 @@
         { "text": "the", "start_seconds": 18.02, "end_seconds": 18.15, "confidence": 0.85 },
         { "text": "window", "start_seconds": 18.15, "end_seconds": 18.77, "confidence": 0.94 },
         { "text": "pane", "start_seconds": 18.77, "end_seconds": 19.87, "confidence": 0.89 }
-      ]
+      ],
+      "source_line_index": 1
     },
     {
       "_note": "First chorus line: doubled vocals lower per-word anchor scores; melisma on the final word stretches it past 2.5 s.",
@@ -42,7 +43,8 @@
         { "text": "wake", "start_seconds": 48.09, "end_seconds": 48.52, "confidence": 0.58 },
         { "text": "me", "start_seconds": 48.52, "end_seconds": 48.71, "confidence": 0.55 },
         { "text": "up", "start_seconds": 48.71, "end_seconds": 51.33, "confidence": 0.52 }
-      ]
+      ],
+      "source_line_index": 11
     },
     {
       "_note": "Bridge line under heavy vocoder: no usable transcript anchor; timing interpolated from the .lrc hint. Words empty — consumers must not invent timing below line level here.",
@@ -51,7 +53,8 @@
       "end_seconds": 140.9,
       "confidence": 0.18,
       "flags": ["low_confidence", "unaligned", "timing_interpolated"],
-      "words": []
+      "words": [],
+      "source_line_index": 29
     }
   ],
   "supplied_markup": [
@@ -74,6 +77,16 @@
       "source_line_index": 28,
       "hint_seconds": 135.4
     }
+  ],
+  "unmatched_words": [
+    {
+      "_note": "Heard but not in the supplied file: a backing-vocal echo between chorus lines. Counted toward coverage, so it is not reported as untranscribed.",
+      "text": "wake",
+      "start_seconds": 51.48,
+      "end_seconds": 52.1,
+      "confidence": 0.74
+    },
+    { "text": "up", "start_seconds": 52.1, "end_seconds": 53.02, "confidence": 0.69 }
   ],
   "untranscribed_regions": [
     {

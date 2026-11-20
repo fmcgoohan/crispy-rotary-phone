@@ -252,8 +252,10 @@ Two paths, one output document:
   (word timestamps) anyway, then anchor the *supplied* lyric lines to the
   transcript words via fuzzy sequence alignment (`rapidfuzz`, Needleman-Wunsch
   style over normalized tokens). Supplied text is the display truth; Whisper
-  provides the timing. `.lrc` line timestamps, when present, constrain the
-  alignment search window. **Section-header lines** (`[Verse 1]`, `[Chorus]`
+  provides the timing. `.lrc` line timestamps, when present, are a capped
+  cost term (after a track-wide offset estimate), not a search window or a
+  line order — a wrong timestamp never stops a line anchoring where it is
+  sung (lyrics algorithm 4, LYR-2). **Section-header lines** (`[Verse 1]`, `[Chorus]`
   and the like, common in real lyric files) are detected, excluded from
   `lines[]` and from coverage math (they are not sung), and recorded as
   `supplied_markup` — gold-standard structure evidence consumed by stage 6
