@@ -117,17 +117,27 @@
         "onsets": {
           "type": "object",
           "required": ["times", "strengths", "strength_reference"],
+          "description": "Level-gated onset events (see gate).",
           "properties": {
             "times": { "$ref": "common.schema.json#/$defs/event_times" },
             "strengths": {
               "type": "array",
               "items": { "type": "number", "minimum": 0, "maximum": 1 },
-              "description": "Parallel to times, same length; raw onset-envelope value divided by strength_reference, clamped to [0, 1]. The robust (p98) reference keeps values comparable across tracks: 'drum strength > 0.6' means roughly the same thing everywhere, and one outlier accent cannot compress the rest toward 0."
+              "description": "Parallel to times, same length; raw onset-envelope value divided by strength_reference, clamped to [0, 1]. Only onsets that pass the level gate (see gate) are listed; the strength itself is level-independent (the onset envelope is a ratio measure), so a quiet part's onsets are not weaker than a loud part's. The robust (p98) reference keeps values comparable across tracks: 'drum strength > 0.6' means roughly the same thing everywhere, and one outlier accent cannot compress the rest toward 0."
             },
             "strength_reference": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "98th percentile of this channel's raw onset-strength envelope — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference. When times is empty (a channel with no detected onsets, e.g. a silent stem), the documented sentinel 1.0 is written so the field stays present and positive."
+              "description": "98th percentile of this channel's raw onset-strength envelope (the whole envelope, before gating) — the normalization denominator, in raw envelope units. Raw strength of onset i = strengths[i] * strength_reference. When times is empty (no onset survived detection and gating — always so for a channel whose rms_db sits at the -80.0 floor throughout, e.g. a silent or dither-only stem), the documented sentinel 1.0 is written so the field stays present and positive."
+            },
+            "gate": {
+              "type": "object",
+              "description": "The level gate that selected these onsets, embedded so onset lists can be compared across tracks analyzed under different settings. Detected onsets are dropped when this channel's published rms_db at the onset frame is at floor_db, and (stems only) when the stem's rms_db minus the mix's rms_db at that frame is below relative_db — separation bleed and dither are otherwise reported as full-strength onsets. Absent in 1.0.0 documents (ungated).",
+              "required": ["floor_db"],
+              "properties": {
+                "floor_db": { "type": "number", "description": "rms_db silence floor (dBFS); onsets in frames at or below it are dropped." },
+                "relative_db": { "type": "number", "maximum": 0, "description": "Stems only (absent on the mix): minimum stem-minus-mix rms_db (dB) at the onset frame for the onset to be kept." }
+              }
             }
           }
         }

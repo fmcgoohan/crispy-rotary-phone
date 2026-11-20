@@ -1,18 +1,22 @@
 """Stage 3 — audio features per PLAN §4 stage 3; contract:
-schemas/audio_features.schema.json v1.0.0 (frozen).
+schemas/audio_features.schema.json v1.1.0.
 
 Reviewed conventions implemented here:
 - 10 ms hop (100 Hz grid), analysis window 2048 (PLAN §4.3).
 - Tempo/beat grid computed once on the mix; downbeats via
   `assumed_4_4_phase_fit` (OQ-4) — the beat phase (0..3) maximizing mean
   onset strength, ties to the lowest phase.
-- rms_db: dBFS, silence floor clamped at -80.0.
+- rms_db: dBFS, silence floor clamped at -80.0, rounded BEFORE any silence
+  or gate decision reads it (FEAT-13).
 - spectral_centroid_hz: silent frames hold the last valid centroid, frames
   before the first valid one are backfilled from it (review 001 R-2); a
   channel silent throughout writes all zeros (review 002 R-9).
 - onsets: strengths normalized by the p98 of the channel's onset-strength
-  envelope, clamped to [0, 1] (R-1); `strength_reference: 1.0` sentinel when
-  no onsets were detected (R-9).
+  envelope, clamped to [0, 1] (R-1); level-gated (FEAT-1): onsets in frames
+  at the -80 floor are dropped, and a stem's onsets are dropped where the
+  stem sits more than |onset_gate_relative_db| below the mix (the gate is
+  embedded as onsets.gate, S4); `strength_reference: 1.0` sentinel when no
+  onsets remain (R-9) — always so for a channel at the floor throughout.
 - loudness: EBU R128 integrated LUFS; a fully-silent program returns -inf
   from the meter and is clamped to -70.0 (the R128 absolute gate) so the
   document stays valid JSON.
@@ -35,6 +39,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from . import TOOL_VERSION, canonical, config, versions
 from .library import Library, PrerequisiteError, mark_dependents_stale
@@ -44,6 +49,7 @@ from .models import (
     ChannelFeatures,
     DocumentEntry,
     Loudness,
+    OnsetGate,
     Onsets,
     RunMetadata,
     StemFeatures,
@@ -90,12 +96,22 @@ def _load(path: Path):
 
 
 def _rms_db(y):
+    """The published rms_db series: dBFS, floor-clamped, ROUNDED to 2 dp.
+
+    Every silence/gate decision downstream (centroid hold, onset gating,
+    vocal activity) reads this rounded series, so each one is reproducible
+    from the document's own values (FEAT-13; PR #6 round 3 precedent)."""
     import librosa
     import numpy as np
 
     rms = librosa.feature.rms(y=y, frame_length=N_FFT, hop_length=HOP, center=True)[0]
     db = 20.0 * np.log10(np.maximum(rms, 1e-12))
-    return np.maximum(db, SILENCE_FLOOR_DB)
+    db = np.maximum(db, SILENCE_FLOOR_DB)
+    return np.array([canonical.round_db(v) for v in db], dtype=np.float64)
+
+
+def _at_floor(rms_db):
+    return rms_db <= SILENCE_FLOOR_DB
 
 
 def _centroid_hz(y, rms_db):
@@ -106,7 +122,7 @@ def _centroid_hz(y, rms_db):
     cent = librosa.feature.spectral_centroid(
         y=y, sr=SAMPLE_RATE, n_fft=N_FFT, hop_length=HOP, center=True
     )[0]
-    silent = rms_db <= SILENCE_FLOOR_DB + 1e-9
+    silent = _at_floor(rms_db)
     if silent.all():
         return np.zeros_like(cent)  # R-9: silent throughout → all zeros
     n = len(cent)
@@ -117,16 +133,43 @@ def _centroid_hz(y, rms_db):
     return cent[last_valid]
 
 
-def _onsets(y) -> Onsets:
+def _onsets(y, rms_db, mix_rms_db=None, relative_db: Optional[float] = None) -> Onsets:
+    """Onsets gated by level (FEAT-1).
+
+    librosa's onset envelope and peak picking are gain-invariant, so a stem
+    holding only dither or separation bleed yields as many full-strength
+    onsets as a real part. Gate on the published (rounded) rms_db series:
+    an onset is dropped when its frame sits at the -80 dB floor, and — for a
+    stem (relative_db given) — when the stem's rms_db at that frame is more
+    than |relative_db| below the mix's rms_db at the same frame. A channel at
+    the floor throughout takes the R-9 sentinel directly, so rms, centroid
+    and onsets agree. The strength reference stays the p98 of the channel's
+    whole (ungated) envelope: the gate selects onsets, it does not rescale
+    them.
+    """
     import librosa
     import numpy as np
+
+    gate = OnsetGate(floor_db=SILENCE_FLOOR_DB, relative_db=relative_db)
+    sentinel = Onsets(times=[], strengths=[], strength_reference=1.0, gate=gate)  # R-9
+    floor = _at_floor(rms_db)
+    if floor.all():
+        return sentinel
 
     env = librosa.onset.onset_strength(y=y, sr=SAMPLE_RATE, hop_length=HOP)
     frames = librosa.onset.onset_detect(
         onset_envelope=env, sr=SAMPLE_RATE, hop_length=HOP, backtrack=False
     )
+    # The envelope and the rms series share the centred 10 ms frame grid;
+    # clamp in case their lengths differ by a frame at the tail.
+    idx = np.minimum(frames, len(rms_db) - 1)
+    keep = ~floor[idx]
+    if relative_db is not None:
+        midx = np.minimum(frames, len(mix_rms_db) - 1)
+        keep &= (rms_db[idx] - mix_rms_db[midx]) >= relative_db
+    frames = frames[keep]
     if len(frames) == 0:
-        return Onsets(times=[], strengths=[], strength_reference=1.0)  # R-9 sentinel
+        return sentinel
     reference = float(np.percentile(env, 98))
     # Keep the schema's exclusiveMinimum satisfied even for whisper-quiet
     # channels whose p98 would round to 0.000.
@@ -137,6 +180,7 @@ def _onsets(y) -> Onsets:
         times=[canonical.round_seconds(t) for t in times],
         strengths=[canonical.round_ratio(s) for s in strengths],
         strength_reference=reference,
+        gate=gate,
     )
 
 
@@ -149,14 +193,17 @@ def _timeseries(values, unit: str, rounder) -> Timeseries:
     )
 
 
-def _channel_features(y) -> ChannelFeatures:
+def _channel_features(y, mix_rms_db=None, relative_db: Optional[float] = None):
+    """(features, rounded rms series). The mix passes no mix_rms_db and gets
+    the floor gate only; a stem passes the mix's series and the relative gate."""
     rms = _rms_db(y)
     cent = _centroid_hz(y, rms)
-    return ChannelFeatures(
+    features = ChannelFeatures(
         rms_db=_timeseries(rms, "dbfs", canonical.round_db),
         spectral_centroid_hz=_timeseries(cent, "hz", canonical.round_hz),
-        onsets=_onsets(y),
+        onsets=_onsets(y, rms, mix_rms_db, relative_db),
     )
+    return features, rms
 
 
 def _beats_and_tempo(y_mix, phase_fit_window_seconds: float) -> tuple[Tempo, Beats]:
@@ -325,20 +372,23 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
         # _channel_features (mix onsets) — deliberate: sharing it would
         # couple the two code paths for a sub-second saving per track.
         tempo, beats = _beats_and_tempo(mix_mono, cfg.features.phase_fit_window_seconds)
+        # The mix goes first: its rounded rms series is the reference for
+        # the stems' relative onset gate (FEAT-1). D3: the configured gate
+        # passes through the precision contract and the ROUNDED value both
+        # drives the gate and is embedded in each stem's onsets.gate.
+        mix_channel, mix_rms = _channel_features(mix_mono)
+        relative_db = canonical.round_db(cfg.features.onset_gate_relative_db)
         stem_channels: dict[str, ChannelFeatures] = {}
         vocal_rms = None
         for name in STEM_NAMES:
             y, _ = _load(stems_dir / f"{name}.flac")
-            channel = _channel_features(y)
+            channel, rms = _channel_features(y, mix_rms, relative_db)
             stem_channels[name] = channel
             if name == "vocals":
                 # Hysteresis runs over the ROUNDED series — the exact values
                 # published in the document — so regions are derivable from
-                # the document's own envelope + params (PR #6 round 3), and
-                # the RMS isn't computed twice.
-                import numpy as np
-
-                vocal_rms = np.array(channel.rms_db.values)
+                # the document's own envelope + params (PR #6 round 3).
+                vocal_rms = rms
 
         document = AudioFeaturesDocument(
             track_id=track_id,
@@ -346,7 +396,7 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
             tempo=tempo,
             beats=beats,
             loudness=Loudness(integrated_lufs=_integrated_lufs(mix_stereo)),
-            mix=_channel_features(mix_mono),
+            mix=mix_channel,
             stems=StemFeatures(**stem_channels),
             vocal_activity=_vocal_activity(vocal_rms, cfg.features),
         )

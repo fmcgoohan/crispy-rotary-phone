@@ -207,6 +207,11 @@ vocal stem only.
   recorded in the document as `strength_reference`) and clamped to [0, 1], so
   "drum strength > 0.6" means roughly the same thing across tracks and one
   outlier accent can't compress the rest toward 0 (review 001, R-1).
+  Onsets are level-gated (the envelope itself is gain-invariant): frames at
+  the −80 dB rms floor carry none, and a stem's onsets are dropped where the
+  stem sits more than `features.onset_gate_relative_db` (default −30) below
+  the mix, which removes separation bleed and dither; the gate is embedded
+  in each `onsets.gate`.
 - **RMS/loudness envelope**: RMS in dBFS at the 10 ms hop, per mix and per
   stem, as uniform-hop series. Plus one scalar **integrated LUFS**
   (EBU R128 via `pyloudnorm`) for the mix, so the mapping engine can normalize

@@ -14,7 +14,9 @@ from pydantic import BaseModel
 # Per-document schema versions (PR #6 review, S2: never share a version
 # constant across documents — schemas evolve independently).
 SOURCE_SCHEMA_VERSION = "1.0.0"
-AUDIO_FEATURES_SCHEMA_VERSION = "1.0.0"
+# audio_features 1.1.0: additive — optional `gate` on onsets (FEAT-1 level
+# gate, S4).
+AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
 LYRICS_SCHEMA_VERSION = "1.1.0"
@@ -124,10 +126,16 @@ class Loudness(BaseModel):
     integrated_lufs: float
 
 
+class OnsetGate(BaseModel):
+    floor_db: float
+    relative_db: Optional[float] = None  # stems only; the mix has no reference
+
+
 class Onsets(BaseModel):
     times: list[float]
     strengths: list[float]
     strength_reference: float
+    gate: Optional[OnsetGate] = None  # absent in 1.0.0 documents
 
 
 class ChannelFeatures(BaseModel):
