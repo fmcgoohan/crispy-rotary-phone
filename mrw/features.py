@@ -487,9 +487,10 @@ def _run_features(track: str, library: Library, cfg: config.Config) -> FeaturesR
                 "no beat evidence in mix (mix rms_db at the -80 dB floor "
                 "throughout: silent); no beat grid can be written"
             )
-        # The mix onset envelope is computed here (beat grid) and again in
-        # _channel_features (mix onsets) — deliberate: sharing it would
-        # couple the two code paths for a sub-second saving per track.
+        # _channel_features(mix_mono) above already built the mix onset
+        # envelope (mix onsets); _beats_and_tempo builds it again for the
+        # beat grid — deliberate: sharing it would couple the two code paths
+        # for a sub-second saving per track.
         tempo, beats = _beats_and_tempo(mix_mono, cfg.features.phase_fit_window_seconds)
         relative_db = canonical.round_db(cfg.features.onset_gate_relative_db)
         stem_channels: dict[str, ChannelFeatures] = {}

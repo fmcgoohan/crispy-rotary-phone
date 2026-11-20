@@ -631,7 +631,9 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
                 duration=duration,
             )
             unmatched_words = _words_from_obs(
-                sorted(alignment.unmatched, key=lambda w: w.start)  # stable
+                sorted(  # schema: sorted by start; total key so ties are deterministic
+                    alignment.unmatched, key=lambda w: (w.start, w.end, w.text)
+                )
             )
             for a in alignment.lines:
                 words = _words_from_pairs(a.words)

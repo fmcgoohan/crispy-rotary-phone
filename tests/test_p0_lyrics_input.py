@@ -149,8 +149,7 @@ def test_compressed_markup_line_marks_every_occurrence():
 
 
 def test_pinned_revision_reaches_download_model(tmp_path, monkeypatch):
-    faster_whisper = pytest.importorskip("faster_whisper.utils")  # T5: neural dep
-    import faster_whisper.utils
+    fw_utils = pytest.importorskip("faster_whisper.utils")  # T5: neural dep
 
     from mrw.lyrics import fetch_whisper_model, resolve_whisper_model
     from mrw.whisper_models import WHISPER_MODELS
@@ -161,7 +160,7 @@ def test_pinned_revision_reaches_download_model(tmp_path, monkeypatch):
         calls.append((name, kwargs))
         return str(tmp_path / "snap")
 
-    monkeypatch.setattr(faster_whisper.utils, "download_model", fake_download)
+    monkeypatch.setattr(fw_utils, "download_model", fake_download)
     resolve_whisper_model("small")
     fetch_whisper_model("small")
     pinned = WHISPER_MODELS["small"][1]
@@ -171,12 +170,11 @@ def test_pinned_revision_reaches_download_model(tmp_path, monkeypatch):
 
 
 def test_local_model_directory_is_used_as_is(tmp_path, monkeypatch):
-    faster_whisper = pytest.importorskip("faster_whisper.utils")  # T5: neural dep
-    import faster_whisper.utils
+    fw_utils = pytest.importorskip("faster_whisper.utils")  # T5: neural dep
 
     from mrw.lyrics import fetch_whisper_model, resolve_whisper_model
 
-    monkeypatch.setattr(faster_whisper.utils, "download_model",
+    monkeypatch.setattr(fw_utils, "download_model",
                         lambda *a, **k: pytest.fail("must not download"))
     model_dir = tmp_path / "local-model"
     model_dir.mkdir()

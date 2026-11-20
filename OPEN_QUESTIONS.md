@@ -86,7 +86,8 @@ Montreal Forced Aligner; trust `.lrc` timestamps outright.
 **Recommendation: Whisper-anchor with rapidfuzz.** MFA is a heavy non-Python
 toolchain tuned for speech, weak on singing without custom acoustic models;
 `.lrc` timestamps are line-granular and frequently offset (they become
-search-window hints only). Known weakness: passages Whisper can't transcribe
+hints: a capped cost term after a track-wide offset estimate — see the
+resolution note below). Known weakness: passages Whisper can't transcribe
 can't anchor the supplied text either — those lines surface as `unaligned`
 with interpolated timing rather than fake precision.
 

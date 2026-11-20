@@ -23,7 +23,9 @@ AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 # lyrics 1.1.0: additive — engine.language_source, outside_vocal_activity
 # flag, untranscribed_regions sharpened to uncovered spans (review 007).
 # 1.2.0: additive — lines[].source_line_index and top-level unmatched_words
-# in aligned mode (analysis findings LYR-9, CRIT-1).
+# in aligned mode (analysis findings LYR-9, CRIT-1). The same version also
+# fixes supplied_markup ordering: hint order when every entry has a hint,
+# else file order, with one entry per stacked LRC time tag.
 LYRICS_SCHEMA_VERSION = "1.2.0"
 # video 1.1.0: additive — `timing` (offset of the video clock from the audio
 # origin, vfr indicator); every time now on the audio timeline (VID-2).

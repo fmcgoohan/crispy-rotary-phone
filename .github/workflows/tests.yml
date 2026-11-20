@@ -29,7 +29,20 @@ jobs:
         with:
           persist-credentials: false
       - name: Install ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        # The runner's apt mirror has stalled for the whole job twice
+        # (fmcgoohan/crispy-rotary-phone#15 and #19). Bound each attempt and
+        # retry instead of hanging until the job timeout.
+        timeout-minutes: 16
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 300 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg'; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out; retrying"
+            sudo dpkg --configure -a || true
+            sleep 10
+          done
+          exit 1
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -50,7 +63,20 @@ jobs:
         with:
           persist-credentials: false
       - name: Install ffmpeg + espeak-ng
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng
+        # The runner's apt mirror has stalled for the whole job twice
+        # (fmcgoohan/crispy-rotary-phone#15 and #19). Bound each attempt and
+        # retry instead of hanging until the job timeout.
+        timeout-minutes: 16
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 300 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng'; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out; retrying"
+            sudo dpkg --configure -a || true
+            sleep 10
+          done
+          exit 1
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
