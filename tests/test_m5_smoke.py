@@ -427,6 +427,7 @@ def test_moved_original_is_prerequisite_error(tmp_path: Path) -> None:
     assert result.exit_code == 2
     assert "original video not found" in result.output
     assert "copy_video" in result.output  # names the remedy
+    assert "--update" in result.output  # ...one that works (ORCH-6)
 
 
 def test_lyrics_config_hash_covers_pr11_fields() -> None:

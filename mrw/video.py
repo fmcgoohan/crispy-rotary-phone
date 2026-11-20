@@ -43,8 +43,14 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-from . import TOOL_VERSION, canonical, config, costs, hashing, versions
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from . import TOOL_VERSION, canonical, config, costs, hashing, inputs, versions
+from .library import (
+    Library,
+    PrerequisiteError,
+    append_api_ledger,
+    failure_message,
+    mark_dependents_stale,
+)
 from .models import (
     ApiUsage,
     CaptionBackendInfo,
@@ -730,20 +736,68 @@ def _detect_cuts(path: Path, vcfg: config.VideoConfig, stream: VideoStreamInfo,
 
 
 def _resolve_video_path(track_dir: Path, source_doc: dict) -> Path:
-    copies = sorted(track_dir.glob("source_video.*"))
-    if copies:
-        return copies[0]
+    """The file the stage analyses: the first candidate whose bytes are the
+    ingested video (DET-3/ORCH-2/VID-5). Library copies source_video.* are
+    tried first, then original_path. Only a candidate of the recorded size
+    is hashed (~1 s/GB, small next to the stage's decode passes), so a
+    truncated leftover copy costs nothing (SEC-9).
+
+    A copy that fails the hash check does not hide an intact original
+    (review A-3): the stage falls back to it. When nothing verifies, the
+    error names each rejected file and the remedy that fits it.
+    """
+    expected = source_doc["file"]["sha256"]
+    size = source_doc["file"]["size_bytes"]
     original = Path(source_doc["file"]["original_path"])
+    copies = [p for p in sorted(track_dir.glob("source_video.*"))
+              if p.is_file() and p.stat().st_size == size]
+    problems: list[str] = []
+    for copy in copies:
+        actual = hashing.sha256_file(copy)
+        if actual == expected:
+            return copy
+        problems.append(
+            f"the library copy {copy} is damaged (sha256 {actual}, expected "
+            f"{expected}) — delete it, or replace it with `mrw ingest "
+            f"<the original video> --update`"
+        )
     if original.is_file():
-        return original
-    raise PrerequisiteError(
-        f"original video not found at {original} (OQ-2: it is referenced, "
-        "not copied) — restore it there, or re-ingest with "
-        "ingest.copy_video = true"
-    )
+        actual = (
+            hashing.sha256_file(original)
+            if original.stat().st_size == size
+            else f"of a {original.stat().st_size}-byte file"
+        )
+        if actual == expected:
+            return original
+        problems.append(
+            f"the file at {original} is not the ingested video (sha256 "
+            f"{actual}, expected {expected}) — restore the original there, "
+            "or ingest the new file as a new track"
+        )
+    elif not problems:
+        raise PrerequisiteError(
+            f"original video not found at {original} (OQ-2: it is referenced, "
+            "not copied) — restore it there, or relink it with `mrw ingest "
+            "<its new path> --update` (with ingest.copy_video = true that also "
+            "keeps a verified copy in the library)"
+        )
+    else:
+        problems.append(f"the original is not at {original}")
+    raise PrerequisiteError("; ".join(problems))
 
 
 def run_video(
+    track: str, library: Library, cfg: config.Config, estimate_only: bool = False
+) -> VideoResult:
+    track_id = library.resolve_track_id(track)
+    if estimate_only:
+        # Read-only (records nothing, spends nothing): no run lock needed.
+        return _run_video(track_id, library, cfg, estimate_only)
+    with library.stage_lock(track_id, "video"):
+        return _run_video(track_id, library, cfg, estimate_only)
+
+
+def _run_video(
     track: str, library: Library, cfg: config.Config, estimate_only: bool = False
 ) -> VideoResult:
     track_id = library.resolve_track_id(track)
@@ -756,28 +810,41 @@ def run_video(
         )
     track_dir = library.track_dir(track_id)
     source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
-    video_path = _resolve_video_path(track_dir, source_doc)
 
     vcfg = cfg.video
     video_hash = config.stage_hash(vcfg)
+    inputs_sha = inputs.current_inputs("video", manifest, source_doc)
     prior = manifest.documents.video
     if (
         not estimate_only
         and prior.status == "ok"
         and prior.config_hash == video_hash
         and versions.is_current("video", prior.algorithm_version)
+        and inputs.inputs_match(prior.inputs_sha256, inputs_sha)
         and (track_dir / "video.json").is_file()
     ):
         return VideoResult(track_id, -1, vcfg.caption_backend, None, None, True)
 
+    # Resolved and verified only when the stage will read the file (DET-3):
+    # an up-to-date track whose original moved stays a no-op, and bytes
+    # that are not the ingested video are refused before any analysis.
+    video_path = _resolve_video_path(track_dir, source_doc)
+
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
     backend = None  # visible to the failure path for partial-spend recording
+    recorded = False
+    # Identity of the document on disk — what a failed entry carries
+    # forward (review A-1); the new one once it has been written.
+    on_disk_sha = prior.content_sha256
 
     def _record(entry: DocumentEntry) -> None:
         def apply(m) -> None:
             m.documents.video = entry
-            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+            append_api_ledger(m, "video", entry.status, entry.run)
+            # Keyed on the document on disk changing, not on status: a
+            # failed entry carries the on-disk identity forward (review A-1).
+            if entry.content_sha256 != prior.content_sha256:
                 mark_dependents_stale(m, "video")
 
         apply(manifest)
@@ -990,6 +1057,7 @@ def run_video(
             _shutil.rmtree(frames_dir)
         frames_tmp.rename(frames_dir)
         content_sha = library.write_document(track_id, "video.json", document)
+        on_disk_sha = content_sha
 
         usage = None
         if vcfg.caption_backend != "null":
@@ -1005,6 +1073,7 @@ def run_video(
                 content_sha256=content_sha,
                 config_hash=video_hash,
                 algorithm_version=versions.current("video"),
+                inputs_sha256=inputs_sha,
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),
@@ -1013,12 +1082,20 @@ def run_video(
                 ),
             )
         )
+        recorded = True
         return VideoResult(
             track_id, len(shots), vcfg.caption_backend, estimate, usage, False
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException (SEC-9): an interrupted run still records failed
+        # with its partial spend (and ledger entry), then the interruption
+        # propagates unwrapped. Not after the ok entry is committed: that
+        # would mark a good video.json failed and append its spend to the
+        # ledger a second time (review A-2).
+        if recorded:
+            raise
         import shutil as _shutil
 
         _shutil.rmtree(track_dir / ".frames.tmp", ignore_errors=True)
@@ -1026,6 +1103,11 @@ def run_video(
         _record(
             DocumentEntry(
                 status="failed",
+                # The document on disk is unchanged by the failure, so its
+                # identity carries forward (review A-1): dependents built
+                # from it stay current, and an identical re-run does not
+                # mark them stale.
+                content_sha256=on_disk_sha,
                 config_hash=video_hash,
                 run=(
                     RunMetadata(
@@ -1037,7 +1119,9 @@ def run_video(
                     if partial
                     else None
                 ),
-                error=str(exc)[:500],
+                error=failure_message(exc)[:500],
             )
         )
+        if not isinstance(exc, Exception):
+            raise
         raise VideoError(str(exc)[:500]) from exc

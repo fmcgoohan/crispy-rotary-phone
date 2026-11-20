@@ -1,20 +1,67 @@
-"""mrw CLI. Exit codes: 0 success, 1 stage failure, 2 bad invocation."""
+"""mrw CLI. Exit codes: 0 success, 1 stage failure, 2 bad invocation,
+130 interrupted (Ctrl-C, SIGTERM, SIGHUP)."""
 
 from __future__ import annotations
 
+import contextlib
+import signal
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import typer
+from typer.core import TyperGroup
 
 from . import __version__, config, versions
 from .library import Library
+
+EXIT_INTERRUPTED = 130  # 128 + SIGINT, the shell convention
+
+
+def _raise_keyboard_interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
+@contextlib.contextmanager
+def _signals_as_keyboard_interrupt() -> Iterator[None]:
+    """SIGTERM/SIGHUP (a closed terminal, `kill`, a batch supervisor) used
+    to kill the process with no cleanup, so a running stage never recorded
+    failed and its partial API spend vanished (SEC-9). While a command
+    runs they raise KeyboardInterrupt, which every stage's failure path
+    records before re-raising. Previous handlers are restored afterwards
+    (also keeps in-process test runners unaffected)."""
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            previous[sig] = signal.signal(sig, _raise_keyboard_interrupt)
+        except ValueError:  # not the main thread: leave signals alone
+            pass
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+class _InterruptibleGroup(TyperGroup):
+    """Maps an interruption to exit 130 with one line, instead of click's
+    generic "Aborted!" with exit 1 (indistinguishable from a stage
+    failure)."""
+
+    def invoke(self, ctx):
+        with _signals_as_keyboard_interrupt():
+            try:
+                return super().invoke(ctx)
+            except KeyboardInterrupt:
+                typer.echo("error: interrupted", err=True)
+                raise typer.Exit(EXIT_INTERRUPTED) from None
+
 
 app = typer.Typer(
     name="mrw",
     help="Music Reinterpretation Workbench — analysis pipeline.",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
+    cls=_InterruptibleGroup,
 )
 
 _LIBRARY_OPT = typer.Option(
@@ -46,11 +93,20 @@ def ingest(
         None, "--lyrics", help="Optional lyrics file (.lrc or .txt)."
     ),
     title: Optional[str] = typer.Option(None, "--title", help="Display title override."),
+    update: bool = typer.Option(
+        False,
+        "--update",
+        help="For an already-ingested track: register new --lyrics (resets "
+        "lyrics/structure to pending), apply --title, make the "
+        "ingest.copy_video copy, record this path as the original, and "
+        "regenerate a missing source_audio.flac. Other documents are "
+        "left untouched.",
+    ),
     library: Path = _LIBRARY_OPT,
     config_path: Optional[Path] = _CONFIG_OPT,
 ) -> None:
     """Register a track: probe, hash, normalize audio, write source.json."""
-    from .ingest import IngestError, ingest as run_ingest
+    from .ingest import LYRICS_SUFFIXES, IngestError, ingest as run_ingest
 
     if not media.is_file():
         typer.echo(f"error: no such file: {media}", err=True)
@@ -58,18 +114,42 @@ def ingest(
     if lyrics is not None and not lyrics.is_file():
         typer.echo(f"error: no such lyrics file: {lyrics}", err=True)
         raise typer.Exit(2)
+    if lyrics is not None and lyrics.suffix.lower() not in LYRICS_SUFFIXES:
+        # LYR-13: anything else (.srt, .docx, ...) used to be parsed as txt.
+        typer.echo(
+            f"error: --lyrics must be a .lrc or .txt file, got {lyrics.name}",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     cfg = _load_config(config_path)
     try:
         result = run_ingest(
-            media, Library(library), cfg, lyrics_path=lyrics, title=title
+            media, Library(library), cfg, lyrics_path=lyrics, title=title,
+            update=update,
         )
     except IngestError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(1)
 
-    if result.already_ingested:
+    if result.already_ingested and update:
+        if result.updated:
+            typer.echo(
+                f"updated {result.track_id} ({result.title}): "
+                + "; ".join(result.updated)
+            )
+        else:
+            typer.echo(
+                f"already ingested: {result.track_id} ({result.title}) "
+                "— nothing to update"
+            )
+    elif result.already_ingested:
         typer.echo(f"already ingested: {result.track_id} ({result.title}) — no-op")
+        for item in result.ignored:
+            typer.echo(
+                f"warning: ignored {item} — re-run with --update to apply",
+                err=True,
+            )
     else:
         kind = "video" if result.has_video else "audio"
         typer.echo(f"ingested {result.track_id} ({result.title}) [{kind}]")
@@ -268,17 +348,29 @@ def status(
 ) -> None:
     """List tracks and per-document statuses.
 
-    A document recorded `ok` under a different config, or by an older
-    version of its stage's code (mrw/versions.py), is displayed as `stale`
-    — derived here from the stored config_hash and algorithm_version; the
+    A document recorded `ok` under a different config, by an older
+    version of its stage's code (mrw/versions.py), or from inputs that have
+    since changed (mrw/inputs.py), is displayed as `stale` — derived here
+    from the stored config_hash, algorithm_version and inputs_sha256; the
     manifest itself is never rewritten by this command (review 006, note 2).
     """
+    import json as _json
+
+    from . import inputs
+
     cfg = _load_config(config_path)
+    manifest = None
+    source_doc = None
 
     def _display(name: str, entry) -> str:
         status = entry.status
         if status != "ok":
             return status
+        if source_doc is not None and not inputs.inputs_match(
+            getattr(entry, "inputs_sha256", None),
+            inputs.current_inputs(name, manifest, source_doc),
+        ):
+            return "stale"
         section = config.STAGE_SECTION.get(name)
         stored_hash = entry.config_hash
         if stored_hash and section:
@@ -297,6 +389,12 @@ def status(
         manifest = lib.read_manifest(track_id)
         if manifest is None:
             continue
+        try:
+            source_doc = _json.loads(
+                (lib.track_dir(track_id) / "source.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            source_doc = None
         docs = manifest.documents
         parts = [
             "source=" + _display("source", docs.source),

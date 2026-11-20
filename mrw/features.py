@@ -43,14 +43,15 @@ the double-run byte-identity smoke test is the standing evidence.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import TOOL_VERSION, canonical, config, versions
-from .library import Library, PrerequisiteError, mark_dependents_stale
+from . import TOOL_VERSION, canonical, config, inputs, versions
+from .library import Library, PrerequisiteError, failure_message, mark_dependents_stale
 from .models import (
     AudioFeaturesDocument,
     Beats,
@@ -410,6 +411,12 @@ def _vocal_activity(vocal_rms_db, fcfg: config.FeaturesConfig) -> VocalActivity:
 
 def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesResult:
     track_id = library.resolve_track_id(track)
+    with library.stage_lock(track_id, "features"):
+        return _run_features(track_id, library, cfg)
+
+
+def _run_features(track: str, library: Library, cfg: config.Config) -> FeaturesResult:
+    track_id = library.resolve_track_id(track)
     manifest = library.read_manifest(track_id)
     if manifest is None or manifest.documents.source.status != "ok":
         raise PrerequisiteError(f"track {track_id} has no successful ingest")
@@ -433,22 +440,31 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
         )
 
     features_hash = config.stage_hash(cfg.features)
+    source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
+    inputs_sha = inputs.current_inputs("audio_features", manifest, source_doc)
     prior = manifest.documents.audio_features
     if (
         prior.status == "ok"
         and prior.config_hash == features_hash
         and versions.is_current("audio_features", prior.algorithm_version)
+        and inputs.inputs_match(prior.inputs_sha256, inputs_sha)
         and (track_dir / "audio_features.json").is_file()
     ):
         return FeaturesResult(track_id, 0.0, -1, already_done=True)
 
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t0 = time.monotonic()
+    recorded = False
+    # Identity of the document on disk — what a failed entry carries
+    # forward (review A-1); the new one once it has been written.
+    on_disk_sha = prior.content_sha256
 
     def _record(entry: DocumentEntry) -> None:
         def apply(m) -> None:
             m.documents.audio_features = entry
-            if entry.status == "ok" and entry.content_sha256 != prior.content_sha256:
+            # Keyed on the document on disk changing, not on status: a
+            # failed entry carries the on-disk identity forward (review A-1).
+            if entry.content_sha256 != prior.content_sha256:
                 mark_dependents_stale(m, "audio_features")
 
         apply(manifest)
@@ -499,6 +515,7 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
             vocal_activity=_vocal_activity(vocal_rms, cfg.features),
         )
         content_sha = library.write_document(track_id, "audio_features.json", document)
+        on_disk_sha = content_sha
         _record(
             DocumentEntry(
                 status="ok",
@@ -507,6 +524,7 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
                 content_sha256=content_sha,
                 config_hash=features_hash,
                 algorithm_version=versions.current("audio_features"),
+                inputs_sha256=inputs_sha,
                 run=RunMetadata(
                     started_at=started_at,
                     duration_seconds=round(time.monotonic() - t0, 2),
@@ -514,6 +532,7 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
                 ),
             )
         )
+        recorded = True
         return FeaturesResult(
             track_id=track_id,
             bpm_global=document.tempo.bpm_global,
@@ -522,12 +541,24 @@ def run_features(track: str, library: Library, cfg: config.Config) -> FeaturesRe
         )
     except PrerequisiteError:
         raise
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException (SEC-9): interruptions are recorded as failed too,
+        # then propagate unwrapped.
+        if recorded:  # ok entry already committed (review A-2)
+            raise
+        message = failure_message(exc)[:500]
         _record(
             DocumentEntry(
                 status="failed",
+                # The document on disk is unchanged by the failure, so its
+                # identity carries forward (review A-1): dependents built
+                # from it stay current, and an identical re-run does not
+                # mark them stale.
+                content_sha256=on_disk_sha,
                 config_hash=features_hash,
-                error=str(exc)[:500],
+                error=message,
             )
         )
-        raise FeaturesError(str(exc)[:500]) from exc
+        if not isinstance(exc, Exception):
+            raise
+        raise FeaturesError(message) from exc

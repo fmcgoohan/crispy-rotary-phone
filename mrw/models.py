@@ -32,7 +32,10 @@ VIDEO_SCHEMA_VERSION = "1.1.0"
 # 1.3.0: additive — optional `api_usage` on run metadata (M5 cost ledger).
 # 1.4.0: additive — optional `algorithm_version` on document entries and the
 # stems block (mrw/versions.py: code changes mark documents stale).
-MANIFEST_SCHEMA_VERSION = "1.4.0"
+# 1.5.0: additive — `inputs_sha256` on document entries and `content_sha256`
+# on the stems block (mrw/inputs.py: consumed-input identities, DET-1);
+# optional top-level append-only `api_ledger` (ORCH-7/SCH-4/VID-7).
+MANIFEST_SCHEMA_VERSION = "1.5.0"
 
 Status = Literal["ok", "pending", "failed", "stale", "not_applicable"]
 
@@ -340,6 +343,7 @@ class DocumentEntry(BaseModel):
     content_sha256: Optional[str] = None
     config_hash: Optional[str] = None
     algorithm_version: Optional[int] = None
+    inputs_sha256: Optional[str] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
 
@@ -355,11 +359,23 @@ class ManifestDocuments(BaseModel):
 class StemsState(BaseModel):
     status: Status
     retained: bool
+    content_sha256: Optional[str] = None
     config_hash: Optional[str] = None
     algorithm_version: Optional[int] = None
     run: Optional[RunMetadata] = None
     error: Optional[str] = None
     warning: Optional[str] = None
+
+
+class ApiLedgerEntry(BaseModel):
+    stage: Literal["stems", "audio_features", "lyrics", "video", "structure"]
+    started_at: str
+    status: Literal["ok", "failed"]
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    usd: float
+    estimated_usd: Optional[float] = None
 
 
 class Manifest(BaseModel):
@@ -371,3 +387,4 @@ class Manifest(BaseModel):
     created_at: str
     documents: ManifestDocuments
     stems: Optional[StemsState] = None
+    api_ledger: Optional[list[ApiLedgerEntry]] = None
