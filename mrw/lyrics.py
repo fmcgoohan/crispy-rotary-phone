@@ -1,5 +1,5 @@
 """Stage 4 — lyrics per PLAN §4 stage 4; contract: schemas/lyrics.schema.json
-v1.2.0.
+v1.3.0.
 
 Mode `aligned` when the track was ingested with a lyrics file, else
 `transcribed`. Transcription: faster-whisper (`small`, int8, CPU) on the
@@ -22,6 +22,12 @@ Transcription is clipped to padded, merged vocal-activity windows
 (clip_to_vocal_activity, default on — review 007 finding 4): full-file 30 s
 windows that mix near-silence with quiet singing decode to nothing, while
 the same audio decodes cleanly in well-conditioned windows.
+
+Model provenance (OQ-7 resolution): engine.model_source says whether the
+Whisper weights were a pinned revision (engine.model_revision) or a local
+directory — recorded by basename plus a content fingerprint
+(engine.model_fingerprint), never by absolute path; the fingerprint also
+joins inputs_sha256, so weights replaced in place mark lyrics stale.
 
 Determinism (D5): the engine decodes greedily at temperature 0 and this
 stage emits documents only, so the precision-contract rounding is the
@@ -52,6 +58,7 @@ from .models import (
     SuppliedMarkup,
     UntranscribedRegion,
 )
+from .whisper_models import model_provenance
 
 _MARKUP = re.compile(r"^\[[^\]]+\]$")
 _LABELS = ("intro", "verse", "chorus", "bridge", "outro")
@@ -234,9 +241,9 @@ def resolve_whisper_model(model_name: str) -> str:
     downloads only, via `mrw models fetch`; transcription runs from the
     cache, at the revision pinned in mrw/whisper_models.py.
     """
-    import os
+    from .whisper_models import is_pinned
 
-    if os.path.isdir(model_name):
+    if not is_pinned(model_name):  # a local model directory (validated in config)
         return model_name
     from faster_whisper.utils import download_model
 
@@ -267,9 +274,9 @@ def pinned_whisper_model(model_name: str) -> tuple[str, str]:
 def fetch_whisper_model(model_name: str) -> Path:
     """Download the Whisper model at its pinned revision if absent; returns
     its local directory. A local model directory is returned as is."""
-    import os
+    from .whisper_models import is_pinned
 
-    if os.path.isdir(model_name):
+    if not is_pinned(model_name):  # a local model directory (validated in config)
         return Path(model_name)
     from faster_whisper.utils import download_model
 
@@ -543,7 +550,12 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
 
     lyrics_hash = config.stage_hash(cfg.lyrics)
     source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
-    inputs_sha = inputs.current_inputs("lyrics", manifest, source_doc)
+    # A local model directory's content fingerprint joins inputs_sha256, so
+    # replacing its weights in place marks lyrics stale (mrw/inputs.py).
+    model_prov = model_provenance(cfg.lyrics.model)
+    inputs_sha = inputs.current_inputs(
+        "lyrics", manifest, source_doc, model_fingerprint=model_prov.fingerprint
+    )
     prior = manifest.documents.lyrics
     if (
         prior.status == "ok"
@@ -695,8 +707,11 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
             language=language,
             engine=LyricsEngine(
                 name="faster-whisper",
-                model=cfg.lyrics.model,
+                model=model_prov.model,
                 language_source=language_source,
+                model_source=model_prov.source,
+                model_revision=model_prov.revision,
+                model_fingerprint=model_prov.fingerprint,
             ),
             lines=lines,
             supplied_markup=supplied_markup,

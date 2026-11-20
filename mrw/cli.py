@@ -361,6 +361,16 @@ def status(
     cfg = _load_config(config_path)
     manifest = None
     source_doc = None
+    whisper_fp: list[Optional[str]] = []  # computed at most once, on demand
+
+    def _model_fingerprint(name: str) -> Optional[str]:
+        if name != "lyrics":
+            return None
+        if not whisper_fp:
+            from .whisper_models import model_provenance
+
+            whisper_fp.append(model_provenance(cfg.lyrics.model).fingerprint)
+        return whisper_fp[0]
 
     def _display(name: str, entry) -> str:
         status = entry.status
@@ -368,7 +378,10 @@ def status(
             return status
         if source_doc is not None and not inputs.inputs_match(
             getattr(entry, "inputs_sha256", None),
-            inputs.current_inputs(name, manifest, source_doc),
+            inputs.current_inputs(
+                name, manifest, source_doc,
+                model_fingerprint=_model_fingerprint(name),
+            ),
         ):
             return "stale"
         section = config.STAGE_SECTION.get(name)

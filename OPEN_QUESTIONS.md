@@ -116,11 +116,19 @@ documented config for hard material.)
 every faster-whisper size name is pinned to an upstream commit
 (`mrw/whisper_models.py`); `mrw models fetch` downloads that commit and
 transcription loads it from the cache only. A local model directory is an
-explicit opt-out: it is stored as an absolute path, and only that path joins
-the lyrics config_hash. The hash is therefore tied to one machine's layout,
-and replacing the weights in place changes lyrics.json without marking it
-stale. Flagging an unpinned model inside lyrics.json is deferred (it would be
-an additive schema change).
+explicit opt-out: the config stores it as an absolute path, so the lyrics
+config_hash (manifest-only) is tied to one machine's layout.
+**Follow-up (lyrics schema 1.3.0, lyrics algorithm 6) — the deferral is
+resolved:** lyrics.json's engine block now records `model_source`
+("pinned" | "local"); a pinned model adds `model_revision` (the commit sha);
+a local directory is recorded by its basename only (never the absolute path,
+which would break cross-machine byte identity — D1/D2) plus
+`model_fingerprint`, a sha256 over the directory's files (sorted relative
+paths + per-file sha256; dot-entries skipped). The fingerprint also joins the
+lyrics `inputs_sha256` (only for a local model, so pinned-model entries keep
+their value), so replacing the weights in place now marks lyrics stale in
+both the stage's no-op check and `mrw status`; status fingerprints the
+directory once per invocation.
 
 **OQ-8 — Shot detector: PySceneDetect ContentDetector vs TransNetV2?**
 **Recommendation: PySceneDetect for v1.** Deterministic, dependency-light,

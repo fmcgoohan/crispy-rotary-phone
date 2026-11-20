@@ -19,15 +19,30 @@
     },
     "engine": {
       "type": "object",
-      "description": "What produced the timing (and, in transcribed mode, the text). Config-derived except `language`, which may be audio-content-derived — see language_source. Not run metadata.",
+      "description": "What produced the timing (and, in transcribed mode, the text). Config-derived except `language`, which may be audio-content-derived — see language_source — and model_fingerprint, which is derived from the local model's files. Not run metadata.",
       "required": ["name", "model"],
       "properties": {
         "name": { "type": "string", "description": "e.g. 'faster-whisper'." },
-        "model": { "type": "string", "description": "e.g. 'small'." },
+        "model": { "type": "string", "description": "Pinned model (model_source 'pinned'): the faster-whisper size name, e.g. 'small'. Local model directory (model_source 'local', since 1.3.0): the directory's basename only — never its absolute path, which is machine-specific; model_fingerprint identifies the contents." },
         "language_source": {
           "type": "string",
           "enum": ["pinned", "detected_vocal_window", "default_no_vocal_activity"],
           "description": "Provenance of `language`: 'pinned' from config; 'detected_vocal_window' — detected on a window assembled from the earliest vocal_activity regions, so detection never runs on a silent stem head (review 007 field finding 1); 'default_no_vocal_activity' — the track has NO vocal-activity regions, detection on silence is meaningless and numerically knife-edge, so the configured fallback language is recorded instead (degenerate-case convention, H2; added in 1.1.0)."
+        },
+        "model_source": {
+          "type": "string",
+          "enum": ["pinned", "local"],
+          "description": "Provenance of the Whisper weights (added in 1.3.0). 'pinned': a size name resolved to the upstream commit in model_revision, loaded from the local cache at exactly that revision. 'local': a model directory supplied in config — an explicit opt-out of pinning; nothing outside this document ties the weights to a published revision, so treat cross-library comparisons with care. Absent in documents written before 1.3.0."
+        },
+        "model_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "Pinned model only: the upstream (Hugging Face) commit sha the weights were loaded at (added in 1.3.0)."
+        },
+        "model_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Local model only: sha256 hex over the model directory's files — for every regular file (dot-files and dot-directories skipped, file symlinks followed), the line '<relative POSIX path>\\t<sha256 hex of the file>\\n', lines sorted by path, concatenated as UTF-8 and hashed. Path-independent; changes whenever any weight or tokenizer file changes, and joins the lyrics stage's inputs_sha256 so such a change marks the document stale (added in 1.3.0)."
         }
       }
     },

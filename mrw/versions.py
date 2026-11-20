@@ -44,7 +44,9 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     #    [0, duration]; unmatched transcript words kept and counted toward
     #    coverage; zero-length word spans ignored in uncovered_spans
     #    (LYR-1/2/8/11, SCH-3, CRIT-1, CRIT-5).
-    "lyrics": 5,
+    # 6: engine.model_source / model_revision / model_fingerprint; a local
+    #    model directory recorded by basename, not absolute path (OQ-7).
+    "lyrics": 6,
     # 2: palette clustered from per-frame downscaled pixels (was averages
     #    of whole image rows — VID-1); rotation-aware frame geometry
     #    (portrait phone video decoded scrambled — VID-4).

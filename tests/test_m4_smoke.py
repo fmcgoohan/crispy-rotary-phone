@@ -29,6 +29,7 @@ from mrw.align import SuppliedLine, WordObs, align_lines
 from mrw.cli import app
 from mrw.lyrics import Segment, parse_supplied_lyrics
 from mrw.stems import STEM_NAMES
+from mrw.whisper_models import WHISPER_MODELS
 from test_m3_smoke import _click_track, _tone, _write_stereo_wav
 
 REPO = Path(__file__).resolve().parents[1]
@@ -328,6 +329,9 @@ def test_transcribed_document_untranscribed_and_flags(tmp_path, monkeypatch) -> 
         "name": "faster-whisper",
         "model": "small",
         "language_source": "detected_vocal_window",
+        # OQ-7 resolution (lyrics 1.3.0): pinned provenance is explicit.
+        "model_source": "pinned",
+        "model_revision": WHISPER_MODELS["small"][1],
     }
     # Second vocal-activity region has zero word overlap → untranscribed.
     regions = doc["untranscribed_regions"]
@@ -407,7 +411,7 @@ def test_aligned_keeps_unmatched_words_and_line_indexes(tmp_path, monkeypatch) -
     assert docs[0] == docs[1]
     doc = json.loads(docs[0])
     _validate(doc, "lyrics.schema.json")
-    assert doc["schema_version"] == "1.2.0"
+    assert doc["schema_version"] == "1.3.0"
 
     by_text = {l["text"]: l for l in doc["lines"]}
     assert by_text["hello world"]["source_line_index"] == 1
