@@ -158,52 +158,84 @@ def _entry_time(entry: dict, *keys: str) -> float | None:
 
 def frame_table_from_frames(
     frames: list[dict], fallback_fps: float
-) -> tuple[list[float], float]:
-    """(sorted presentation times, end of the last frame) on the container
-    clock, from ffprobe `frame` entries of ONE video stream — the frames
-    the decoder actually output, so a packet that does not decode (leading
+) -> tuple[list[float], float, int]:
+    """(sorted presentation times, end of the last frame, number of frames
+    whose time was inferred) on the container clock, from ffprobe `frame`
+    entries of ONE video stream in output order — the frames the decoder
+    actually output, so a packet that does not decode (leading
     non-keyframes of a -copyinkf cut, a damaged packet mid-stream) is never
     a frame and never shifts another frame's index or time.
 
     A frame's time is its best-effort timestamp (what ffmpeg's filters see
-    as the frame's pts), else its pts. If any decoded frame has neither,
-    the table is synthesised at `fallback_fps` from 0 (CFR assumption).
+    as the frame's pts), else its pts, else its packet dts. A frame with
+    none of them — routinely the delayed frames a B-frame decoder flushes
+    at the end of an AVI — is placed one frame duration after the frame
+    output before it (before the next timed frame, for leading ones), the
+    rule ffmpeg itself applies to such frames, so the real clock of every
+    other frame is kept (review V-R1). Only when NO frame has a time is the
+    table synthesised at `fallback_fps` from 0 (CFR assumption).
     """
     if not frames:
         raise VideoError("decoder outputs no frame of the video stream")
-    timed: list[tuple[float, float]] = []  # (pts, duration or 0)
-    for fr in frames:
-        t = _entry_time(fr, "best_effort_timestamp_time", "pts_time")
-        if t is None:
-            if fallback_fps <= 0:
-                raise VideoError("video stream has no frames with timestamps")
-            n = len(frames)
-            return [i / fallback_fps for i in range(n)], n / fallback_fps
-        d = _entry_time(fr, "duration_time", "pkt_duration_time")
-        timed.append((t, d if d is not None else 0.0))
-    timed.sort()
-    times = [t for t, _ in timed]
+    n = len(frames)
+    raw = [
+        _entry_time(fr, "best_effort_timestamp_time", "pts_time", "pkt_dts_time")
+        for fr in frames
+    ]
+    durs = [_entry_time(fr, "duration_time", "pkt_duration_time") for fr in frames]
+    known = [i for i, t in enumerate(raw) if t is not None]
+    if not known:
+        if fallback_fps <= 0:
+            raise VideoError("video stream has no frames with timestamps")
+        return [i / fallback_fps for i in range(n)], n / fallback_fps, n
+    # Typical frame interval: median positive step between timed neighbours,
+    # else 1/avg fps — used where a frame carries no duration.
+    steps = sorted(
+        (raw[b] - raw[a]) / (b - a)  # type: ignore[operator]
+        for a, b in itertools.pairwise(known)
+        if raw[b] > raw[a]  # type: ignore[operator]
+    )
+    step = (steps[len(steps) // 2] if steps
+            else 1.0 / fallback_fps if fallback_fps > 0 else 0.04)
+
+    def dur(i: int) -> float:
+        d = durs[i]
+        return d if d is not None and d > 0 else step
+
+    times: list[float] = list(raw)  # type: ignore[arg-type]
+    for i in range(known[0] - 1, -1, -1):  # leading untimed: back from first
+        times[i] = times[i + 1] - dur(i)
+    for i in range(known[0] + 1, n):  # later untimed: forward from previous
+        if raw[i] is None:
+            times[i] = times[i - 1] + dur(i - 1)
+    order = sorted(range(n), key=lambda i: times[i])
+    times = [times[i] for i in order]
     # Length of the last frame: its own duration, else the last frame
     # interval (VFR-safe — never an average rate), else 1/avg fps.
-    last = timed[-1][1]
+    last = durs[order[-1]] or 0.0
     if last <= 0:
-        if len(times) > 1 and times[-1] > times[-2]:
+        if n > 1 and times[-1] > times[-2]:
             last = times[-1] - times[-2]
         else:
             last = 1.0 / fallback_fps if fallback_fps > 0 else 0.04
-    return times, times[-1] + last
+    return times, times[-1] + last, n - len(known)
 
 
-def count_undecodable(packets: list[dict], decoded_pts: list[float]) -> int:
+def count_undecodable(
+    packets: list[dict], decoded_pts: list[float], match_by_time: bool = True
+) -> int:
     """Packets of the stream that produced no decoded frame.
 
     Packets flagged discard ('D', e.g. before an MP4 edit-list start) are
-    never meant to be output and are not counted. Packets are matched to
-    decoded frames by presentation time (PTS_MATCH_SECONDS); when packets
-    carry no timestamps the count is the shortfall of decoded frames."""
+    never meant to be output and are not counted. When every packet carries
+    a pts and every decoded time is real (`match_by_time`), packets are
+    matched to decoded frames by presentation time (PTS_MATCH_SECONDS).
+    Otherwise the count is the shortfall of decoded frames: a dts-only
+    packet (AVI) is in decode order, not presentation order, under B-frames,
+    and an inferred frame time is no packet's time (review V-R1)."""
     kept = [p for p in packets if "D" not in (p.get("flags") or "")]
-    times = [_entry_time(p, "pts_time", "dts_time") for p in kept]
-    if any(t is None for t in times):
+    times = [_entry_time(p, "pts_time") for p in kept]
+    if not match_by_time or any(t is None for t in times):
         return max(0, len(kept) - len(decoded_pts))
     decoded = sorted(decoded_pts)
     lost = 0
@@ -547,18 +579,19 @@ def _frame_table(path: Path, stream: VideoStreamInfo) -> tuple[list[float], floa
     frames = _ffprobe_json(
         ["-threads", "0", "-select_streams", str(stream.index),
          "-show_entries",
-         "frame=best_effort_timestamp_time,pts_time,duration_time,pkt_duration_time",
+         ("frame=best_effort_timestamp_time,pts_time,pkt_dts_time,duration_time,"
+          "pkt_duration_time"),
          str(path)],
         "decoded frames",
     ).get("frames", [])
-    pts, end = frame_table_from_frames(frames, stream.fps)
+    pts, end, n_inferred = frame_table_from_frames(frames, stream.fps)
     packets = _ffprobe_json(
         ["-select_streams", str(stream.index),
          "-show_entries", "packet=pts_time,dts_time,flags",
          str(path)],
         "packets",
     ).get("packets", [])
-    return pts, end, count_undecodable(packets, pts)
+    return pts, end, count_undecodable(packets, pts, match_by_time=n_inferred == 0)
 
 
 def _audio_origin(path: Path, audio_index: int) -> float:

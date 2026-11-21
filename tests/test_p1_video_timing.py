@@ -149,16 +149,39 @@ def test_frame_table_sorts_and_uses_last_duration() -> None:
         {"best_effort_timestamp_time": "0.533333", "duration_time": "0.033333"},
         {"pts_time": "0.600000", "duration_time": "0.066667"},
     ]
-    pts, end = frame_table_from_frames(frames, 30.0)
+    pts, end, inferred = frame_table_from_frames(frames, 30.0)
     assert pts == [0.5, 0.533333, 0.566667, 0.6]
+    assert inferred == 0
     assert end == pytest.approx(0.666667)  # last frame's own duration (VFR-safe)
 
 
 def test_frame_table_without_timestamps_is_synthesised() -> None:
     frames = [{"pts_time": "N/A"}] * 3
-    assert frame_table_from_frames(frames, 10.0) == ([0.0, 0.1, 0.2], 0.3)
+    assert frame_table_from_frames(frames, 10.0) == ([0.0, 0.1, 0.2], 0.3, 3)
     with pytest.raises(VideoError):
         frame_table_from_frames([], 10.0)
+
+
+def test_frame_table_infers_only_the_untimed_frames() -> None:
+    # Review V-R1: a B-frame AVI decoder flushes its last delayed frames with
+    # no timestamp at all, and a leading frame may lack one too. Only those
+    # frames are placed (one duration from their neighbour); every other
+    # frame keeps its real container time (here 0.08 s, not 0).
+    na = {"best_effort_timestamp_time": "N/A", "pts_time": "N/A",
+          "pkt_dts_time": "N/A", "duration_time": "0.040000"}
+    timed = [{"best_effort_timestamp_time": "N/A", "pts_time": "N/A",
+              "pkt_dts_time": f"{0.12 + i * 0.04:.6f}", "duration_time": "0.040000"}
+             for i in range(3)]
+    pts, end, inferred = frame_table_from_frames([na, *timed, na, na], 25.0)
+    assert pts == pytest.approx([0.08, 0.12, 0.16, 0.2, 0.24, 0.28])
+    assert end == pytest.approx(0.32)
+    assert inferred == 3
+    # No duration anywhere: the median timed interval is used.
+    bare = [{"pts_time": "1.000000"}, {"pts_time": "1.100000"}, {}, {}]
+    pts, end, inferred = frame_table_from_frames(bare, 25.0)
+    assert pts == pytest.approx([1.0, 1.1, 1.2, 1.3])
+    assert end == pytest.approx(1.4)
+    assert inferred == 2
 
 
 def test_count_undecodable_matches_packets_to_decoded_frames() -> None:
@@ -172,6 +195,15 @@ def test_count_undecodable_matches_packets_to_decoded_frames() -> None:
     assert count_undecodable(packets, decoded) == 4
     no_ts = [{"pts_time": "N/A", "flags": "___"}] * 10
     assert count_undecodable(no_ts, decoded) == 4
+    # dts-only packets (AVI) are in decode order, not presentation order,
+    # under B-frames: never matched by time — the shortfall is counted.
+    dts_only = [{"pts_time": "N/A", "dts_time": f"{i / 25:.6f}", "flags": "___"}
+                for i in range(10)]
+    shifted = [0.08 + i / 25 for i in range(10)]
+    assert count_undecodable(dts_only, shifted) == 0
+    # Inferred decoded times belong to no packet: shortfall too.
+    assert count_undecodable(packets, [t + 0.5 for t in pts],
+                             match_by_time=False) == 0
 
 
 def test_vfr_indicator() -> None:

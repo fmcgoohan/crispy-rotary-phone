@@ -56,7 +56,9 @@ ALGORITHM_VERSIONS: dict[str, int] = {
     #    the file's first video stream, attached pictures included); the
     #    frame table holds decoded frames, not packets, so a packet that
     #    does not decode mid-stream no longer shifts later frame indices
-    #    (timing.undecodable_frames reports the loss).
+    #    (timing.undecodable_frames reports the loss); decoded frames with
+    #    no timestamp (B-frame AVI flush) get an inferred time instead of
+    #    discarding the real clock (review V-R1).
     "video": 4,
 }
 

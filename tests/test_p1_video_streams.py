@@ -184,3 +184,56 @@ def test_frame_lost_mid_stream_shifts_nothing_and_is_reported(tmp_path: Path) ->
     assert shots[1]["representative_frames"][0]["time_seconds"] == 3.0
     assert _colour(doc["_track"], shots[1]["representative_frames"][0]) == "blue"
     assert shots[0]["motion"]["p95"] < 0.002 and shots[1]["motion"]["p95"] < 0.002
+
+
+def _bframe_avi(tmp_path: Path, codec: list[str]) -> Path:
+    """Red 2 s → blue 2 s at 25 fps with B-frames, PCM audio, in AVI. AVI
+    packets carry dts only, so decoded frames' times are reconstructed by
+    the decoder: the first comes out at 0.08 s and the delayed frames
+    flushed at end of stream carry no timestamp at all (review V-R1)."""
+    media = tmp_path / "bframes.avi"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "color=c=red:s=320x240:r=25:d=2",
+        "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=25:d=2",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=4:sample_rate=44100",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,setsar=1[v]",
+        "-map", "[v]", "-map", "2:a", *codec, "-pix_fmt", "yuv420p",
+        "-c:a", "pcm_s16le", "-fflags", "+bitexact", str(media),
+    )
+    counts = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-select_streams", "v:0", "-count_packets",
+         "-count_frames", "-show_entries", "stream=nb_read_packets,nb_read_frames",
+         "-of", "json", str(media)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    stream = json.loads(counts)["streams"][0]
+    assert (int(stream["nb_read_packets"]), int(stream["nb_read_frames"])) == (100, 100)
+    return media
+
+
+@needs_ffmpeg
+@pytest.mark.slow
+@pytest.mark.parametrize(("codec", "first"), [
+    # first decoded frame time = the decoder's reorder delay (2 / 1 frames);
+    # h264 flushes 2 untimed frames at the end, mpeg4 1.
+    (["-c:v", "libx264", "-bf", "3"], 0.08),
+    (["-c:v", "mpeg4", "-bf", "2"], 0.04),
+], ids=["h264", "mpeg4"])
+def test_bframe_avi_keeps_real_clock_and_reports_no_loss(
+    tmp_path: Path, codec: list[str], first: float
+) -> None:
+    doc = _run_video(_bframe_avi(tmp_path, codec), tmp_path / "lib")
+    # The real container clock survives the untimed trailing frames: the
+    # stream starts at its first decoded frame, not at a synthesised 0.
+    assert doc["timing"]["offset_seconds"] == first
+    assert doc["video_span"] == {"start_seconds": first,
+                                 "end_seconds": round(first + 4.0, 3)}
+    shots = doc["shots"]
+    assert [(s["start_frame"], s["end_frame"]) for s in shots] == [(0, 50), (50, 100)]
+    assert [s["start_seconds"] for s in shots] == [first, round(first + 2.0, 3)]
+    # 100 packets, 100 decoded frames: dts-only packets are not matched
+    # against presentation times, so no false loss is reported.
+    assert doc["timing"]["undecodable_frames"] == 0
+    assert doc["timing"]["vfr"] is False
+    reps = [s["representative_frames"][0] for s in shots]
+    assert [_colour(doc["_track"], r) for r in reps] == ["red", "blue"]
