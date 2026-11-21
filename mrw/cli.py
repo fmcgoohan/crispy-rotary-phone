@@ -369,7 +369,13 @@ def status(
         if not whisper_fp:
             from .whisper_models import model_provenance
 
-            whisper_fp.append(model_provenance(cfg.lyrics.model).fingerprint)
+            try:
+                whisper_fp.append(model_provenance(cfg.lyrics.model).fingerprint)
+            except FileNotFoundError as e:
+                # The configured local model is gone or empty: lyrics can't be
+                # confirmed current, so it displays stale; say why once.
+                typer.echo(f"warning: {e}", err=True)
+                whisper_fp.append("unavailable")
         return whisper_fp[0]
 
     def _display(name: str, entry) -> str:

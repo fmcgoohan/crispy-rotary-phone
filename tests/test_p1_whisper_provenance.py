@@ -206,3 +206,17 @@ def test_unmatched_words_sorted_on_rounded_values_with_total_key():
         random.Random(seed).shuffle(shuffled)
         out = sort_unmatched_words(_words_from_obs(shuffled))
         assert [(w.text, w.start_seconds, w.end_seconds) for w in out] == expected
+
+
+def test_fingerprint_refuses_missing_or_empty_directory(tmp_path):
+    import pytest
+
+    from mrw.whisper_models import local_model_fingerprint
+
+    with pytest.raises(FileNotFoundError, match="not found"):
+        local_model_fingerprint(tmp_path / "gone")
+    empty = tmp_path / "empty"
+    (empty / ".cache").mkdir(parents=True)
+    (empty / ".DS_Store").write_bytes(b"x")  # only skipped entries
+    with pytest.raises(FileNotFoundError, match="no model files"):
+        local_model_fingerprint(empty)

@@ -79,6 +79,10 @@ def local_model_fingerprint(model_dir: str | os.PathLike) -> str:
     directory give the same fingerprint.
     """
     root = Path(model_dir)
+    if not root.is_dir():
+        # os.walk swallows errors: a missing directory would otherwise
+        # fingerprint as "no files" instead of failing (H2/H3).
+        raise FileNotFoundError(f"local whisper model directory not found: {root}")
     lines = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -93,6 +97,8 @@ def local_model_fingerprint(model_dir: str | os.PathLike) -> str:
                 while chunk := f.read(1 << 20):
                     h.update(chunk)
             lines.append(f"{path.relative_to(root).as_posix()}\t{h.hexdigest()}\n")
+    if not lines:
+        raise FileNotFoundError(f"local whisper model directory has no model files: {root}")
     return hashlib.sha256("".join(sorted(lines)).encode("utf-8")).hexdigest()
 
 

@@ -559,7 +559,10 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
     source_doc = json.loads((track_dir / "source.json").read_text(encoding="utf-8"))
     # A local model directory's content fingerprint joins inputs_sha256, so
     # replacing its weights in place marks lyrics stale (mrw/inputs.py).
-    model_prov = model_provenance(cfg.lyrics.model)
+    try:
+        model_prov = model_provenance(cfg.lyrics.model)
+    except FileNotFoundError as e:
+        raise PrerequisiteError(f"{e} (lyrics.model in mrw.toml)") from None
     inputs_sha = inputs.current_inputs(
         "lyrics", manifest, source_doc, model_fingerprint=model_prov.fingerprint
     )
