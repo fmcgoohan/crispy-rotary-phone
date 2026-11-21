@@ -187,3 +187,22 @@ def test_local_model_document_identical_across_locations(tmp_path, monkeypatch) 
         assert result.exit_code == 0, result.output
         outputs.append((library / track_id / "lyrics.json").read_bytes())
     assert outputs[0] == outputs[1]
+
+
+def test_unmatched_words_sorted_on_rounded_values_with_total_key():
+    import random
+
+    from mrw.align import WordObs
+    from mrw.lyrics import _words_from_obs, sort_unmatched_words
+
+    # 1.0004 and 1.0001 both publish as 1.0: raw-time sorting would order
+    # them by sub-ms jitter; the published order must depend only on
+    # published values (start, end, text).
+    raw = [WordObs("b", 1.0004, 1.2), WordObs("a", 1.0001, 1.2),
+           WordObs("c", 0.5, 0.7), WordObs("a", 1.0002, 1.1)]
+    expected = [("c", 0.5, 0.7), ("a", 1.0, 1.1), ("a", 1.0, 1.2), ("b", 1.0, 1.2)]
+    for seed in range(5):
+        shuffled = raw[:]
+        random.Random(seed).shuffle(shuffled)
+        out = sort_unmatched_words(_words_from_obs(shuffled))
+        assert [(w.text, w.start_seconds, w.end_seconds) for w in out] == expected

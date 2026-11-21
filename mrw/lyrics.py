@@ -501,6 +501,13 @@ def _words_from_obs(observed: list[WordObs]) -> list[LyricsWord]:
     ]
 
 
+def sort_unmatched_words(words: list[LyricsWord]) -> list[LyricsWord]:
+    """Schema order for unmatched_words: by start. Sorted on the ROUNDED,
+    published values with a total key (start, end, text), so sub-millisecond
+    jitter in the engine's raw times can never reorder near-ties (D1)."""
+    return sorted(words, key=lambda w: (w.start_seconds, w.end_seconds, w.text))
+
+
 def _words_from_pairs(pairs) -> list[LyricsWord]:
     return [
         LyricsWord(
@@ -642,11 +649,7 @@ def _run_lyrics(track: str, library: Library, cfg: config.Config) -> LyricsResul
                 cfg.lyrics.min_anchor_score,
                 duration=duration,
             )
-            unmatched_words = _words_from_obs(
-                sorted(  # schema: sorted by start; total key so ties are deterministic
-                    alignment.unmatched, key=lambda w: (w.start, w.end, w.text)
-                )
-            )
+            unmatched_words = sort_unmatched_words(_words_from_obs(alignment.unmatched))
             for a in alignment.lines:
                 words = _words_from_pairs(a.words)
                 span = (a.start, a.end)
