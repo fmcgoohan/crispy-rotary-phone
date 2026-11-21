@@ -27,7 +27,7 @@ import soundfile as sf
 from typer.testing import CliRunner
 
 import mrw.lyrics
-from mrw.align import SuppliedLine, WordObs, align_lines
+from mrw.align import WORD_MATCH_RATIO, SuppliedLine, WordObs, align_lines
 from mrw.cli import app
 from mrw.lyrics import Segment, parse_supplied_lyrics
 from mrw.stems import STEM_NAMES
@@ -728,10 +728,23 @@ def test_aligned_path_on_real_audio(tmp_path, whisper_weights, suffix) -> None:
         1 + k for k in range(len(_ALIGNED_LINES))
     ]
 
-    # >= 90 % of the supplied words carry word timings (anchored lines).
+    # >= 90 % of the supplied words carry *observed* word timings. Every
+    # word of an anchored line gets a timing, but words Whisper never
+    # matched are interpolated (confidence = best gap ratio, usually 0), so
+    # counting words of anchored lines would pass even if Whisper matched
+    # one word per line. Only a content match (ratio >= WORD_MATCH_RATIO)
+    # counts as observed.
     supplied = sum(len(t.split()) for t, _ in _ALIGNED_LINES)
-    timed = sum(len(l["words"]) for l in lines if "unaligned" not in l["flags"])
-    assert timed / supplied >= 0.9, (timed, supplied, [l["flags"] for l in lines])
+    observed = sum(
+        1
+        for l in lines
+        for w in l["words"]
+        if w["confidence"] >= WORD_MATCH_RATIO
+    )
+    flags = [l["flags"] for l in lines]
+    assert observed / supplied >= 0.9, (observed, supplied, flags)
+    # A clean fixture: every line anchors.
+    assert all("unaligned" not in f for f in flags), flags
 
     # Times: inside [0, duration], non-decreasing inside each line and
     # across the whole document, and each line where it was actually sung.
