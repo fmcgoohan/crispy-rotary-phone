@@ -70,9 +70,11 @@ class LyricsConfig(_Section):
     # OQ-7: faster-whisper on the isolated vocal stem; `small` default.
     # A pinned size name (mrw/whisper_models.py) or a local model directory;
     # checked at load so a typo exits 2 before any work. A local directory
-    # is an explicit opt-out of pinning: it is stored as an absolute path and
-    # only that path joins the config_hash, so replacing the weights in place
-    # changes lyrics.json without marking it stale.
+    # is an explicit opt-out of pinning: it is stored here as an absolute
+    # path (so the config_hash — manifest-only — is machine-specific), while
+    # lyrics.json records model_source "local", the directory's basename and
+    # a content fingerprint, which also joins the lyrics inputs_sha256 so
+    # replacing the weights in place marks lyrics stale (OQ-7 resolution).
     model: str = "small"
 
     # Optional language pin; None = detect once and record (schema).

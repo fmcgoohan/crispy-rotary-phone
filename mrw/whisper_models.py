@@ -12,6 +12,12 @@ Resolved 2026-11-20 from the Hugging Face API.
 
 from __future__ import annotations
 
+import hashlib
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
 # size name -> (repo id, commit sha)
 WHISPER_MODELS: dict[str, tuple[str, str]] = {
     "tiny.en": ("Systran/faster-whisper-tiny.en", "0d3d19a32d3338f10357c0889762bd8d64bbdeba"),
@@ -34,3 +40,77 @@ WHISPER_MODELS: dict[str, tuple[str, str]] = {
     "large-v3-turbo": ("mobiuslabsgmbh/faster-whisper-large-v3-turbo", "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"),
     "turbo": ("mobiuslabsgmbh/faster-whisper-large-v3-turbo", "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"),
 }
+
+
+@dataclass(frozen=True)
+class ModelProvenance:
+    """What lyrics.json's engine block records about the Whisper model.
+
+    pinned: `model` is the size name, `revision` the pinned commit sha.
+    local: `model` is the directory's basename (never the absolute path —
+    a machine-specific path in an analysis document would break
+    cross-machine byte identity, D1/D2), `fingerprint` the directory's
+    content fingerprint (local_model_fingerprint), so replacing the
+    weights in place is visible in the document.
+    """
+
+    model: str
+    source: str  # "pinned" | "local"
+    revision: Optional[str] = None
+    fingerprint: Optional[str] = None
+
+
+def is_pinned(model: str) -> bool:
+    """A pinned size name wins over a same-named directory, matching
+    config's validator (LyricsConfig.model)."""
+    return model in WHISPER_MODELS
+
+
+def local_model_fingerprint(model_dir: str | os.PathLike) -> str:
+    """sha256 (hex) identifying a local model directory's contents.
+
+    Every regular file under the directory (file symlinks followed, as in a
+    Hugging Face cache snapshot; directory symlinks not followed; entries
+    whose name starts with "." skipped — .DS_Store, .cache, .gitattributes
+    carry no weights) contributes the line
+    "<relative POSIX path>\t<sha256 hex of its bytes>\n"; the lines are
+    sorted by path and the fingerprint is sha256 of their UTF-8
+    concatenation. Path-independent: the same files under any parent
+    directory give the same fingerprint.
+    """
+    root = Path(model_dir)
+    if not root.is_dir():
+        # os.walk swallows errors: a missing directory would otherwise
+        # fingerprint as "no files" instead of failing (H2/H3).
+        raise FileNotFoundError(f"local whisper model directory not found: {root}")
+    lines = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            path = Path(dirpath) / name
+            if not path.is_file():
+                continue
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                while chunk := f.read(1 << 20):
+                    h.update(chunk)
+            lines.append(f"{path.relative_to(root).as_posix()}\t{h.hexdigest()}\n")
+    if not lines:
+        raise FileNotFoundError(f"local whisper model directory has no model files: {root}")
+    return hashlib.sha256("".join(sorted(lines)).encode("utf-8")).hexdigest()
+
+
+def model_provenance(model: str) -> ModelProvenance:
+    """Provenance of a validated LyricsConfig.model value (a pinned size
+    name or a local model directory). Hashes the directory's files for a
+    local model — once per stage run or `mrw status` invocation."""
+    if is_pinned(model):
+        return ModelProvenance(model=model, source="pinned", revision=WHISPER_MODELS[model][1])
+    path = Path(model).resolve()
+    return ModelProvenance(
+        model=path.name,
+        source="local",
+        fingerprint=local_model_fingerprint(path),
+    )

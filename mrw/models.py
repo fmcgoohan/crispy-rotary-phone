@@ -26,7 +26,11 @@ AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 # in aligned mode (analysis findings LYR-9, CRIT-1). The same version also
 # fixes supplied_markup ordering: hint order when every entry has a hint,
 # else file order, with one entry per stacked LRC time tag.
-LYRICS_SCHEMA_VERSION = "1.2.0"
+# 1.3.0: additive — engine.model_source ("pinned" | "local"),
+# engine.model_revision (pinned commit sha) and engine.model_fingerprint
+# (local directory content hash); a local model's engine.model is now its
+# directory basename, not an absolute path (OQ-7 resolution, D1/D2, H1).
+LYRICS_SCHEMA_VERSION = "1.3.0"
 # video 1.1.0: additive — `timing` (offset of the video clock from the audio
 # origin, vfr indicator); every time now on the audio timeline (VID-2).
 VIDEO_SCHEMA_VERSION = "1.1.0"
@@ -272,6 +276,9 @@ class LyricsEngine(BaseModel):
     language_source: Optional[
         Literal["pinned", "detected_vocal_window", "default_no_vocal_activity"]
     ] = None
+    model_source: Optional[Literal["pinned", "local"]] = None
+    model_revision: Optional[str] = None
+    model_fingerprint: Optional[str] = None
 
 
 class LyricsWord(BaseModel):

@@ -7,12 +7,18 @@ so a document is never reported up to date after an upstream input changed —
 whichever command changed it, and even if the `stale` flip written by
 mark_dependents_stale was lost or never happened.
 
-Every identity is readable from manifest.json + source.json alone, so
-`mrw status` can derive staleness without hashing media:
+Every per-track identity is readable from manifest.json + source.json
+alone, so `mrw status` can derive staleness without hashing media. The one
+exception is configuration-wide, not per-track: a local Whisper model
+directory, which a stage run or `mrw status` fingerprints once and passes in
+(a pinned model's identity is already its config value):
 
 - audio_features ← stems content_sha256 + source audio_stream_sha256
 - lyrics ← audio_features content_sha256 + stems content_sha256 +
-  source lyrics_input.sha256 (absent when transcribing)
+  source lyrics_input.sha256 (absent when transcribing) + the Whisper
+  model fingerprint when lyrics.model is a local directory
+  (whisper_models.local_model_fingerprint; joins only then, so entries
+  made with a pinned model keep their value)
 - video ← source file.sha256 (the stage also verifies the bytes it opens
   against it before analysing them)
 
@@ -56,9 +62,16 @@ def _hash(parts: list[tuple[str, Optional[str]]]) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:INPUTS_HASH_LEN]
 
 
-def current_inputs(stage: str, manifest: Manifest, source_doc: dict) -> Optional[str]:
+def current_inputs(
+    stage: str,
+    manifest: Manifest,
+    source_doc: dict,
+    *,
+    model_fingerprint: Optional[str] = None,
+) -> Optional[str]:
     """The inputs_sha256 `stage` would record if it ran now (None for stages
-    without tracked inputs)."""
+    without tracked inputs). `model_fingerprint`: the local Whisper model
+    directory's fingerprint (lyrics only; None for a pinned model)."""
     stems_sha = manifest.stems.content_sha256 if manifest.stems else None
     if stage == "audio_features":
         return _hash([
@@ -67,11 +80,14 @@ def current_inputs(stage: str, manifest: Manifest, source_doc: dict) -> Optional
         ])
     if stage == "lyrics":
         lyrics_input = source_doc.get("lyrics_input") or {}
-        return _hash([
+        parts = [
             ("audio_features", manifest.documents.audio_features.content_sha256),
             ("stems", stems_sha),
             ("lyrics_input", lyrics_input.get("sha256")),
-        ])
+        ]
+        if model_fingerprint is not None:
+            parts.append(("whisper_model", model_fingerprint))
+        return _hash(parts)
     if stage == "video":
         return _hash([("source_file", source_doc["file"]["sha256"])])
     return None
