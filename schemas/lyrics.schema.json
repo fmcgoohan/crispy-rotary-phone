@@ -23,7 +23,7 @@
       "required": ["name", "model"],
       "properties": {
         "name": { "type": "string", "description": "e.g. 'faster-whisper'." },
-        "model": { "type": "string", "description": "Pinned model (model_source 'pinned'): the faster-whisper size name, e.g. 'small'. Local model directory (model_source 'local', since 1.3.0): the directory's basename only — never its absolute path, which is machine-specific; model_fingerprint identifies the contents." },
+        "model": { "type": "string", "description": "Pinned model (model_source 'pinned'): the faster-whisper size name, e.g. 'small'. Local model directory (model_source 'local', since 1.3.0): the directory's basename only — never its absolute path, which is machine-specific. The basename is a human label, not an identity: two different directories with the same name record the same value; model_fingerprint identifies the contents." },
         "language_source": {
           "type": "string",
           "enum": ["pinned", "detected_vocal_window", "default_no_vocal_activity"],

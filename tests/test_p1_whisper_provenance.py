@@ -220,3 +220,38 @@ def test_fingerprint_refuses_missing_or_empty_directory(tmp_path):
     (empty / ".DS_Store").write_bytes(b"x")  # only skipped entries
     with pytest.raises(FileNotFoundError, match="no model files"):
         local_model_fingerprint(empty)
+
+
+def test_status_with_unreadable_local_model_shows_stale_and_warns(tmp_path):
+    # The configured local model directory still exists (config validation
+    # requires that) but holds no model files: status must not crash, must
+    # say why, and must not report lyrics as current.
+    import json
+
+    from typer.testing import CliRunner
+
+    from mrw import versions
+    from mrw.cli import app
+    from test_m3_smoke import _click_track, _fabricate_track
+
+    mix = _click_track(2.0)
+    library = tmp_path / "lib"
+    track_id = _fabricate_track(library, mix, {"drums": mix}, tmp_path)
+    mpath = library / track_id / "manifest.json"
+    m = json.loads(mpath.read_text())
+    m["documents"]["lyrics"] = {
+        "status": "ok", "path": "lyrics.json",
+        "algorithm_version": versions.current("lyrics"),
+        "inputs_sha256": "0" * 16}
+    mpath.write_text(json.dumps(m))
+    empty = tmp_path / "model"
+    empty.mkdir()
+    (empty / ".DS_Store").write_bytes(b"x")
+    cfg = tmp_path / "mrw.toml"
+    cfg.write_text(f'[lyrics]\nmodel = "{empty}"\n')
+
+    result = CliRunner().invoke(
+        app, ["status", "--library", str(library), "--config", str(cfg)])
+    assert result.exit_code == 0, result.output
+    assert "no model files" in result.output
+    assert "lyrics=stale" in result.output
