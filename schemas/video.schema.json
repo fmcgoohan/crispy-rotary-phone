@@ -10,7 +10,7 @@
     "track_id": { "$ref": "common.schema.json#/$defs/track_id" },
     "video_span": {
       "$ref": "common.schema.json#/$defs/interval",
-      "description": "Extent of the analysed video on the unified timeline: from the first frame presented at or after t = 0 to the end of the last frame that exists in the stream (packet table, never a container-duration estimate). Starts at timing.offset_seconds when the video starts after the audio; 0 when it starts with or before it."
+      "description": "Extent of the analysed video on the unified timeline: from the first frame presented at or after t = 0 to the end of the last frame the decoder outputs for the stream (decoded frame table, never a container-duration estimate). Starts at timing.offset_seconds when the video starts after the audio; 0 when it starts with or before it."
     },
     "timing": {
       "type": "object",
@@ -24,6 +24,11 @@
         "vfr": {
           "type": "boolean",
           "description": "true when the stream's frame intervals are not constant (variable frame rate, or dropped/duplicated frames): any interval deviates from the median by more than 10 % and by more than 1.1 ms (one 1 ms container tick, so millisecond-timebase rounding of a constant rate is not VFR). Times and frame indices are exact either way (taken from per-frame timestamps); the flag tells consumers not to derive times as index / fps."
+        },
+        "undecodable_frames": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Packets of the analysed video stream that the decoder output no frame for (damaged or undecodable data anywhere in the stream, including leading non-keyframes of a stream-copy cut), excluding packets the container marks discard. Frame indices and times count only decoded frames, so a lost frame never shifts another; the gap it leaves shows as a longer frame interval (and usually vfr: true). 0 when every frame decoded. Added in 1.2.0; absent in older documents."
         }
       }
     },
@@ -62,7 +67,7 @@
           "index": { "type": "integer", "minimum": 0, "description": "0-based shot number; frames/shot_%04d filenames use index+1." },
           "start_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
           "end_seconds": { "$ref": "common.schema.json#/$defs/seconds" },
-          "start_frame": { "type": "integer", "minimum": 0, "description": "Index of the frame in the analysed video stream's decoded frames, in presentation order, counted from the first frame the decoder outputs (packets it discards, e.g. leading non-keyframes of a stream-copy cut, are not frames), for reference back into the original file. Not index / fps: on VFR input frames are not evenly spaced." },
+          "start_frame": { "type": "integer", "minimum": 0, "description": "Index of the frame in the analysed video stream's decoded frames, in presentation order, counted from the first frame the decoder outputs (packets that produce no frame — leading non-keyframes of a stream-copy cut, damaged packets anywhere — are not frames and are counted in timing.undecodable_frames), for reference back into the original file. Not index / fps: on VFR input frames are not evenly spaced." },
           "end_frame": { "type": "integer", "minimum": 0, "description": "Exclusive. The last shot's end_frame is the number of frames in the stream." },
           "representative_frames": {
             "type": "array",

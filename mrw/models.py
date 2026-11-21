@@ -33,7 +33,10 @@ AUDIO_FEATURES_SCHEMA_VERSION = "1.1.0"
 LYRICS_SCHEMA_VERSION = "1.3.0"
 # video 1.1.0: additive — `timing` (offset of the video clock from the audio
 # origin, vfr indicator); every time now on the audio timeline (VID-2).
-VIDEO_SCHEMA_VERSION = "1.1.0"
+# 1.2.0: additive — timing.undecodable_frames (packets of the analysed stream
+# that the decoder output no frame for; the frame table now holds decoded
+# frames only, so such a packet no longer shifts later frame indices).
+VIDEO_SCHEMA_VERSION = "1.2.0"
 # 1.1.0: additive — `error` on the manifest stems block (M2).
 # 1.2.0: additive — `warning` on the stems block (PR #5 review: persist the
 # MPS-fallback reason for batch runs).
@@ -255,6 +258,7 @@ class Shot(BaseModel):
 class VideoTiming(BaseModel):
     offset_seconds: float
     vfr: bool
+    undecodable_frames: Optional[int] = None
 
 
 class VideoDocument(BaseModel):
